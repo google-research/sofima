@@ -18,7 +18,7 @@ the necessary dependencies, run:
 
 # Overview
 
-SOFIMA is uses optical flow regularized with an elastic mesh to establish
+SOFIMA uses optical flow regularized with an elastic mesh to establish
 maps between data in different coordinate systems. Both the [flow estimator](flow_field.py)
 as well as the [mesh solver](mesh.py) are implemented in [JAX](https://github.com/google/jax)
 and will automatically take advantage of GPU acceleration if the hardware if available.

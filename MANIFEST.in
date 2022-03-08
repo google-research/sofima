@@ -1,0 +1,3 @@
+include *.py
+global-exclude *.py[cod]
+global-exclude *_test.py
