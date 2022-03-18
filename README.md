@@ -9,11 +9,17 @@ This is not an officially supported Google product.
 
 # Installation
 
-SOFIMA is implemented purely in Python, and no installation is required. To install
-the necessary dependencies, run:
+SOFIMA is implemented purely in Python, and does not require a build step. To
+install it directly from the repository, run:
 
 ```shell
-  pip install -r requirements.txt
+  pip install git+https://github.com/google-research/sofima
+```
+
+If you have a local clone already, you can instead use:
+
+```shell
+  pip install -e .
 ```
 
 # Overview
