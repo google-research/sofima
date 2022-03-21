@@ -62,7 +62,8 @@ def warp_subvolume(image: np.ndarray,
                    stride: float,
                    out_box: bounding_box.BoundingBoxBase,
                    interpolation: Optional[str] = None,
-                   offset: float = 0.) -> np.ndarray:
+                   offset: float = 0.,
+                   parallelism: int = 1) -> np.ndarray:
   """Warps a subvolume of data according to a coordinate map.
 
   Args:
@@ -80,8 +81,9 @@ def warp_subvolume(image: np.ndarray,
     out_box: bounding box for the warped data
     interpolation: interpolation scheme to use; defaults to nearest neighbor for
       uint64 data, and Lanczos for other types
-    offset: (deprecated do not use) non-zero values necessary to reproduce some
+    offset: (deprecated, do not use) non-zero values necessary to reproduce some
       old renders
+    parallelism: number of threads to use for warping sections
 
   Returns:
     warped image covering 'out_box'
@@ -136,10 +138,7 @@ def warp_subvolume(image: np.ndarray,
   except AttributeError:
     maptype = cvx2.CV_16SC2
 
-  for z in range(0, image.shape[1]):
-    if z in skipped_sections:
-      continue
-
+  def _warp_section(z):
     dense_x = interpolate.RegularGridInterpolator(
         map_points, abs_map[0, z, ...], bounds_error=False, fill_value=None)
     dense_y = interpolate.RegularGridInterpolator(
@@ -159,6 +158,17 @@ def warp_subvolume(image: np.ndarray,
       warped[c, z, ...] = cvx2.remap(
           image[c, z, ...], dx, dy, interpolation=interpolation)
 
+  fs = set()
+  with futures.ThreadPoolExecutor(max_workers=parallelism) as exc:
+    for z in range(0, image.shape[1]):
+      if z in skipped_sections:
+        continue
+
+      fs.add(exc.submit(_warp_section, z=z))
+
+    for f in futures.as_completed(fs):
+      f.result()
+
   # Map IDs back to the original space, which might be beyond the range of
   # int32.
   if orig_to_low is not None:
@@ -169,17 +179,17 @@ def warp_subvolume(image: np.ndarray,
   return warped
 
 
-def ndimage_warp(
-    image: np.ndarray,
-    coord_map: np.ndarray,
-    stride: Sequence[float],
-    work_size: Sequence[int],
-    overlap: Sequence[int],
-    order=1,
-    map_coordinates=ndimage.map_coordinates,
-    image_box: Optional[bounding_box.BoundingBoxBase] = None,
-    map_box: Optional[bounding_box.BoundingBoxBase] = None,
-    out_box: Optional[bounding_box.BoundingBoxBase] = None) -> np.ndarray:
+def ndimage_warp(image: np.ndarray,
+                 coord_map: np.ndarray,
+                 stride: Sequence[float],
+                 work_size: Sequence[int],
+                 overlap: Sequence[int],
+                 order=1,
+                 map_coordinates=ndimage.map_coordinates,
+                 image_box: Optional[bounding_box.BoundingBoxBase] = None,
+                 map_box: Optional[bounding_box.BoundingBoxBase] = None,
+                 out_box: Optional[bounding_box.BoundingBoxBase] = None,
+                 parallelism: int = 1) -> np.ndarray:
   """Warps a subvolume of data using ndimage.map_coordinates.
 
   Args:
@@ -199,6 +209,7 @@ def ndimage_warp(
       the origin of 'image'
     out_box: bounding box for which to generate warped data; if not specified,
       assumed to be the same as image_box
+    parallelism: number of threads to use for warping
 
   Returns:
     warped image
@@ -250,7 +261,7 @@ def ndimage_warp(
   else:
     offset = (0, 0, 0)
 
-  for i in range(calc.num_boxes):
+  def _warp_box(i):
     in_sub_box = calc.generate(i)[1]
     sel = [
         np.s_[start:end] for start, end in zip(in_sub_box.start[::-1][sub_dim:],
@@ -271,6 +282,14 @@ def ndimage_warp(
 
     warped[out_sub_box.to_slice3d()[sub_dim:]] = sub_warped[
         rel_box.to_slice3d()[sub_dim:]]
+
+  fs = set()
+  with futures.ThreadPoolExecutor(max_workers=parallelism) as exc:
+    for i in range(calc.num_boxes):
+      fs.add(exc.submit(_warp_box, i=i))
+
+    for f in futures.as_completed(fs):
+      f.result()
 
   if orig_to_low is not None:
     warped = _relabel_segmentation(warped, orig_to_low, old_uids)
