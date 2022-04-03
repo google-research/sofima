@@ -16,12 +16,6 @@ install it directly from the repository, run:
   pip install git+https://github.com/google-research/sofima
 ```
 
-If you have a local clone already, you can instead use:
-
-```shell
-  pip install -e .
-```
-
 # Overview
 
 SOFIMA uses optical flow regularized with an elastic mesh to establish
