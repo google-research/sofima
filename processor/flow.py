@@ -210,6 +210,6 @@ class EstimateFlow(subvolume_processor.SubvolumeProcessor):
 
   def expected_output_box(
       self, box: bounding_box.BoundingBoxBase) -> bounding_box.BoundingBoxBase:
-    scale_factor = 1 / self.pixelsize(np.array([1, 1, 1]))
+    scale_factor = 1 / self.pixelsize(np.repeat(1, len(box.size)))
     cropped_box = self.crop_box(box)
     return cropped_box.scale(list(scale_factor))
