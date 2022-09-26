@@ -31,6 +31,7 @@ and the mesh node positions.
 # Example usage
 
  * [electron microscopy tile stitching](https://colab.research.google.com/github/google-research/sofima/blob/main/notebooks/em_stitching.ipynb)
+ * [electron microscopy section alignment](https://colab.research.google.com/github/google-research/sofima/blob/main/notebooks/em_alignment.ipynb)
 
 # License
 
