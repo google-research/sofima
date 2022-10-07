@@ -28,7 +28,7 @@ from connectomics.common import utils
 import jax
 import jax.numpy as jnp
 import numpy as np
-import scipy
+import scipy.fftpack
 
 Array = Union[np.ndarray, jnp.ndarray]
 
