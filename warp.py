@@ -15,7 +15,7 @@
 """Utilities for warping image and point data between coordinate systems."""
 
 from concurrent import futures
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple, Union
 from connectomics.common import bounding_box
 from connectomics.common import box_generator
 from connectomics.segmentation import labels
@@ -308,8 +308,10 @@ def render_tiles(
     use_clahe: bool = False,
     clahe_kwargs: ... = None,
     margin_overrides: Optional[Dict[Tuple[int, int], Tuple[int, int, int,
-                                                           int]]] = None
-) -> Tuple[np.ndarray, np.ndarray]:
+                                                           int]]] = None,
+    return_warped_tiles: bool = False
+) -> Union[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray, dict[
+    tuple[int, int], Any]]]:
   """Warps a collection of tiles into a larger image.
 
   All values in the 'tiles' and 'positions' maps are assumed to
@@ -332,6 +334,8 @@ def render_tiles(
     margin_overrides: optional map from (x, y) tile coordinates to a tuple of
       (top, bottom, left, right) margin sizes in pixels; overrides the global
       default provided in 'margin'.
+    return_warped_tiles: whether to return the warped tiles and their relative
+      positions.
 
   Returns:
     tuple of:
@@ -340,6 +344,10 @@ def render_tiles(
 
     'true' pixels in the latter array indicate locations that have been filled
     with tile content during warping; both arrays are (height, width)-shaped
+
+    If the return_warped_tiles argument is True, it also returns a dict from
+    tile coords to the warped tiles and their relative positions
+    (x0, y0, warped_tile).
   """
   if stride[0] != stride[1]:
     raise NotImplementedError(
@@ -352,6 +360,8 @@ def render_tiles(
   map_yx = next(iter(coord_maps.values())).shape[-2:]
   map_box = bounding_box.BoundingBox(
       start=(0, 0, 0), size=(map_yx[1], map_yx[0], 1))
+
+  warped_image_map = {}
 
   # Infer target image size if necessary.
   if width is None or height is None:
@@ -431,6 +441,9 @@ def render_tiles(
     warped_mask = warped_mask[:os[0], :os[1]]
     warped_img = warped_img[:os[0], :os[1]]
 
+    if return_warped_tiles:
+      warped_image_map[(tile_x, tile_y)] = x0, y0, warped_img
+
     ret_mask[y0:y0 + warped_img.shape[0],
              x0:x0 + warped_img.shape[1]][warped_mask] = True
 
@@ -452,4 +465,7 @@ def render_tiles(
     for (x, y), coord_map in coord_maps.items():
       _render_tile(tile_x=x, tile_y=y, coord_map=coord_map)
 
-  return ret, ret_mask
+  if not return_warped_tiles:
+    return ret, ret_mask
+  else:
+    return ret, ret_mask, warped_image_map
