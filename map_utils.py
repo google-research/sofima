@@ -629,7 +629,7 @@ def make_affine_map(matrix: np.ndarray, box: bounding_box.BoundingBoxBase,
   """Builds a coordinate map for an affine transform.
 
   Args:
-    matrix: [3, 4] array, same format as ndimage.transform_affine
+    matrix: [3, 4] array, same format as ndimage.affine_transform
     box: bounding box for which to generate the map
     stride: zyx stride with which to generate the map
 
