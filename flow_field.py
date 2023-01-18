@@ -62,7 +62,7 @@ def masked_xcorr(prev: Array,
   """
   xnp = jnp if use_jax else np
   shape = np.array(prev.shape[-dim:]) + np.array(curr.shape[-dim:]) - 1
-  fast_shape = [scipy.fftpack.helper.next_fast_len(int(x)) for x in shape]
+  fast_shape = [scipy.fftpack.next_fast_len(int(x)) for x in shape]
   out_slice = tuple([slice(None)] * (len(prev.shape) - dim) +
                     [slice(0, int(x)) for x in shape])
 
