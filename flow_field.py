@@ -474,20 +474,18 @@ class JAXMaskedXCorrWithStatsCalculator:
     else:
       selection_mask = selection_mask[out_sel].copy()
 
-    integral_post_mask = _integral_image(post_mask)
-    integral_pre_mask = _integral_image(pre_mask)
-
     pre_image = jnp.asarray(pre_image)
     post_image = jnp.asarray(post_image)
 
     if pre_mask is not None:
-      s = geom_utils.query_integral_image(integral_pre_mask, patch_size, step)
+      s = geom_utils.query_integral_image(
+          _integral_image(pre_mask), patch_size, step)
       m = (s / np.prod(patch_size) >= max_masked)[out_sel]
       selection_mask[m] = False
 
     if post_mask is not None:
-      s = geom_utils.query_integral_image(integral_post_mask, post_patch_size,
-                                          step)
+      s = geom_utils.query_integral_image(
+          _integral_image(post_mask), post_patch_size, step)
       m = (s / np.prod(post_patch_size) >= max_masked)[out_sel]
       selection_mask[m] = False
 
