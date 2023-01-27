@@ -28,7 +28,7 @@ position of (i * Δ + Δx, j * Δ + Δy).
 import collections
 import dataclasses
 import functools
-from typing import List, Optional, Sequence, Tuple, Union
+from typing import Optional, Sequence, Union
 
 from absl import logging
 
@@ -183,7 +183,7 @@ def elastic_mesh_3d(x: jnp.ndarray,
   """Computes internal forces on the nodes of a 3d spring mesh.
 
   Args:
-    x: [3, z, y, x] array of mesh node positions, in relative format
+    x: [3, [batch..], z, y, x] array of mesh node positions, in relative format
     k: spring constant for springs along the x direction; will be scaled
       according to `stride` for all other springs to maintain constant
       elasticity
@@ -195,7 +195,6 @@ def elastic_mesh_3d(x: jnp.ndarray,
   Returns:
     [3, z, y, x] array of forces
   """
-  assert x.ndim == 4
   assert x.shape[0] == 3
   if prefer_orig_order:
     raise NotImplementedError('prefer_orig_order not supported for 3d mesh.')
@@ -206,11 +205,13 @@ def elastic_mesh_3d(x: jnp.ndarray,
   stride = np.array(stride)
   f_tot = None
   for direction in links:
-    l0 = np.array(stride * direction).reshape([3, 1, 1, 1])
-    sel1 = [np.s_[:]]
-    sel2 = [np.s_[:]]
-    pad_neg = [(0, 0)]
-    pad_pos = [(0, 0)]
+    l0 = np.array(stride * direction).reshape([3] + [1] * (x.ndim - 1))
+    # Select everything in non-spatial dimensions.
+    sel1 = [np.s_[:]] * (x.ndim - 3)
+    sel2 = [np.s_[:]] * (x.ndim - 3)
+    # No padding for non-spatial dimensions.
+    pad_neg = [(0, 0)] * (x.ndim - 3)
+    pad_pos = [(0, 0)] * (x.ndim - 3)
     for dim in direction[::-1]:  # zyx
       if dim == -1:
         sel1.append(np.s_[:-1])
@@ -442,7 +443,7 @@ def relax_mesh(
     prev: Optional[jnp.ndarray],
     config: IntegrationConfig,
     mesh_force=inplane_force,
-    prev_fn=None) -> Tuple[jnp.ndarray, List[float], int]:
+    prev_fn=None) -> tuple[jnp.ndarray, list[float], int]:
   """Simulates mesh relaxation.
 
   Args:
