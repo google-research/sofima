@@ -331,15 +331,15 @@ def _update_mesh(mesh: jnp.ndarray,
   """Updates mesh with data for a neighboring tile.
 
   Args:
-    mesh: [2, y, x] mesh to update
+    mesh: [2 or 3, [z,] y, x] mesh to update
     nbor_data: [max(NeighborInfo)] array of neighbor info
-    x: [2, n, y, x] array of mesh node positions for all tiles
-    fx: [2, n, y, x] array of flow data for horizontal tile NNs
-    fy: [2, n, y, x] array of flow data for vertical tile NNs
-    stride: yx stride for the flow and mesh data
+    x: [2 o r3, n, [z,] y, x] array of mesh node positions for all tiles
+    fx: [2 or 3, n, [z,] y, x] array of flow data for horizontal tile NNs
+    fy: [2 or 3, n, [z,] y, x] array of flow data for vertical tile NNs
+    stride: [z]yx stride for the flow and mesh data
 
   Returns:
-    [2, y, x] updated mesh
+    [2 or 3, [z,] y, x] updated mesh
   """
   nbor_idx = nbor_data[NeighborInfo.nbor_idx]
   flow_idx = nbor_data[NeighborInfo.flow_idx]
@@ -379,30 +379,34 @@ def compute_target_mesh(nbor_data: jnp.ndarray, x, fx, fy,
     vmap(partial(compute_target_mesh, x=x, fx=fx, fy=fy))(nbors)
 
   Args:
-    nbor_data: [4, 8] array of neighbor info; -1 in nbor and flow indices
+    nbor_data: [4, 8 or 11] array of neighbor info; -1 in nbor and flow indices
       indicates invalid (missing) entries
-    x: [2, n, y, x] array with node positions
-    fx: [2, n, y, x] array with flow data for horizontal neighbors
-    fy: [2, n, y, x] array with flow data for vertical neighbors
-    stride: yx stride for the flow and mesh data
+    x: [2 or 3, n, [z, ]y, x] array with node positions
+    fx: [2 or 3, n, [z, ]y, x] array with flow data for horizontal neighbors
+    fy: [2 or 3, n, [z, ]y, x] array with flow data for vertical neighbors
+    stride: [z]yx stride for the flow and mesh data
 
   Returns:
-    [2, y, x] array of target positions
+    [2 or 3, [z, ]y, x] array of target positions
   """
   # When used within vmap/jit, dynamic_update_slice with the pasted content
   # extending beyond the updated array will cause the whole update to fail.
   # To mitigate this, extend the buffer sufficiently to ensure that the
   # pasted content (fx, fy) will always fit.
-  y_size, x_size = x.shape[-2:]
-  y_size += max(fy.shape[-2], fx.shape[-2])
-  x_size += max(fy.shape[-1], fx.shape[-1])
+  dim = x.shape[0]
+  zyx_size = list(x.shape[-dim:])
+  for i in range(dim):
+    zyx_size[i] += max(fy.shape[i], fx.shape[i])
 
   # Scan over neighbors (currently this is always exactly 4 and so
   # could just be explicitly unrolled).
-  mesh = jnp.full([2, y_size, x_size], np.nan)
+  mesh = jnp.full([2] + zyx_size, np.nan)
   updated = jax.lax.scan(
       ft.partial(_update_mesh, x=x, fx=fx, fy=fy, stride=stride), mesh,
       nbor_data)[0]
 
   # Cut the array back to the desired shape.
-  return updated[:, :x.shape[-2], :x.shape[-1]]
+  if dim == 2:
+    return updated[:, :x.shape[-2], :x.shape[-1]]
+  else:
+    return updated[:, :x.shape[-3], :x.shape[-2], :x.shape[-1]]
