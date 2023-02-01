@@ -22,8 +22,7 @@ by the estimated offset. This system is relaxed to establish an initial position
 for every tile based on cross-correlation between tile overlaps.
 """
 
-import functools as ft
-from typing import List, Mapping, Optional, Tuple
+from typing import Mapping, Optional
 
 import jax.numpy as jnp
 import numpy as np
@@ -33,43 +32,58 @@ from sofima import flow_field
 from sofima import mesh
 
 
-def _estimate_offset(a: np.ndarray,
-                     b: np.ndarray,
-                     range_limit: float,
-                     filter_size: int = 10) -> Tuple[List[float], float]:
+def _estimate_offset(
+    a: np.ndarray, b: np.ndarray, range_limit: float, filter_size: int = 10
+) -> tuple[list[float], float]:
   """Estimates the global offset vector between images 'a' and 'b'."""
   # Mask areas with insufficient dynamic range.
-  a_mask = (ndimage.maximum_filter(a, filter_size) -
-            ndimage.minimum_filter(a, filter_size)) < range_limit
-  b_mask = (ndimage.maximum_filter(b, filter_size) -
-            ndimage.minimum_filter(b, filter_size)) < range_limit
+  a_mask = (
+      ndimage.maximum_filter(a, filter_size)
+      - ndimage.minimum_filter(a, filter_size)
+  ) < range_limit
+  b_mask = (
+      ndimage.maximum_filter(b, filter_size)
+      - ndimage.minimum_filter(b, filter_size)
+  ) < range_limit
   mfc = flow_field.JAXMaskedXCorrWithStatsCalculator()
   xo, yo, _, pr = mfc.flow_field(
-      a, b, pre_mask=a_mask, post_mask=b_mask, patch_size=a.shape,
-      step=(1, 1)).squeeze()
+      a, b, pre_mask=a_mask, post_mask=b_mask, patch_size=a.shape, step=(1, 1)
+  ).squeeze()
   return [xo, yo], abs(pr)
 
 
-def _estimate_offset_horiz(overlap: int, left: np.ndarray, right: np.ndarray,
-                           range_limit: float,
-                           filter_size: int) -> Tuple[List[float], float]:
-  return _estimate_offset(left[:, -overlap:], right[:, :overlap], range_limit,
-                          filter_size)
+def _estimate_offset_horiz(
+    overlap: int,
+    left: np.ndarray,
+    right: np.ndarray,
+    range_limit: float,
+    filter_size: int,
+) -> tuple[list[float], float]:
+  return _estimate_offset(
+      left[:, -overlap:], right[:, :overlap], range_limit, filter_size
+  )
 
 
-def _estimate_offset_vert(overlap: int, top: np.ndarray, bot: np.ndarray,
-                          range_limit: float,
-                          filter_size: int) -> Tuple[List[float], float]:
-  return _estimate_offset(top[-overlap:, :], bot[:overlap, :], range_limit,
-                          filter_size)
+def _estimate_offset_vert(
+    overlap: int,
+    top: np.ndarray,
+    bot: np.ndarray,
+    range_limit: float,
+    filter_size: int,
+) -> tuple[list[float], float]:
+  return _estimate_offset(
+      top[-overlap:, :], bot[:overlap, :], range_limit, filter_size
+  )
 
 
-def compute_coarse_offsets(yx_shape: Tuple[int, int],
-                           tile_map: Mapping[Tuple[int, int], np.ndarray],
-                           overlaps_xy=((200, 300), (200, 300)),
-                           min_range=(10, 100, 0),
-                           min_overlap=160,
-                           filter_size=10) -> Tuple[np.ndarray, np.ndarray]:
+def compute_coarse_offsets(
+    yx_shape: tuple[int, int],
+    tile_map: Mapping[tuple[int, int], np.ndarray],
+    overlaps_xy=((200, 300), (200, 300)),
+    min_range=(10, 100, 0),
+    min_overlap=160,
+    filter_size=10,
+) -> tuple[np.ndarray, np.ndarray]:
   """Computes a coarse offset between every neighboring tile pair.
 
   Args:
@@ -105,10 +119,11 @@ def compute_coarse_offsets(yx_shape: Tuple[int, int],
   """
 
   def _find_offset(estimate_fn, pre, post, overlaps, max_ortho_shift, axis):
-
     def _is_valid_offset(offset, axis):
-      return abs(offset[1 - axis]) < max_ortho_shift and abs(
-          offset[axis]) >= min_overlap
+      return (
+          abs(offset[1 - axis]) < max_ortho_shift
+          and abs(offset[axis]) >= min_overlap
+      )
 
     done = False
 
@@ -168,8 +183,14 @@ def compute_coarse_offsets(yx_shape: Tuple[int, int],
 
       left = tile_map[(x, y)]
       right = tile_map[(x + 1, y)]
-      conn_x[:, 0, y, x] = _find_offset(_estimate_offset_horiz, left, right,
-                                        overlaps_xy[0], max(overlaps_xy[1]), 0)
+      conn_x[:, 0, y, x] = _find_offset(
+          _estimate_offset_horiz,
+          left,
+          right,
+          overlaps_xy[0],
+          max(overlaps_xy[1]),
+          0,
+      )
 
   conn_y = np.full((2, 1, yx_shape[0], yx_shape[1]), np.nan)
   for y in range(0, yx_shape[0] - 1):
@@ -179,16 +200,22 @@ def compute_coarse_offsets(yx_shape: Tuple[int, int],
 
       top = tile_map[(x, y)]
       bot = tile_map[(x, y + 1)]
-      conn_y[:, 0, y, x] = _find_offset(_estimate_offset_vert, top, bot,
-                                        overlaps_xy[1], max(overlaps_xy[0]), 1)
+      conn_y[:, 0, y, x] = _find_offset(
+          _estimate_offset_vert,
+          top,
+          bot,
+          overlaps_xy[1],
+          max(overlaps_xy[0]),
+          1,
+      )
 
   return conn_x, conn_y
 
 
 # TODO(mjanusz): add type aliases for ndarrays
-def interpolate_missing_offsets(conn: np.ndarray,
-                                axis: int,
-                                max_r: int = 4) -> np.ndarray:
+def interpolate_missing_offsets(
+    conn: np.ndarray, axis: int, max_r: int = 4
+) -> np.ndarray:
   """Estimates missing coarsse offsets.
 
   Missing offsets are indicated by the value 'inf'. This function
@@ -239,25 +266,27 @@ def interpolate_missing_offsets(conn: np.ndarray,
   return conn
 
 
-def elastic_tile_mesh(x: jnp.ndarray,
-                      k=None,
-                      stride=None,
-                      prefer_orig_order=False,
-                      links=None,
-                      cx=None,
-                      cy=None) -> jnp.ndarray:
-  """Computes force on nodes of a tile mesh.
+def elastic_tile_mesh(
+    x: jnp.ndarray,
+    cx: jnp.ndarray,
+    cy: jnp.ndarray,
+    k=None,
+    stride=None,
+    prefer_orig_order=False,
+    links=None,
+) -> jnp.ndarray:
+  """Computes force on nodes of a 2d tile mesh.
 
   Unused arguments are defined for compatibility with the mesh solver.
 
   Args:
     x: [2, z, y, x] mesh where every node represents a tile
+    cx: desired XY offsets between (x, y) and (x+1, y) tiles
+    cy: desired XY offsets between (x, y) and (x, y+1) tiles
     k: unused
     stride: unused
     prefer_orig_order: unused
     links: unused
-    cx: desired XY offsets between (x, y) and (x+1, y) tiles
-    cy: desired XY offsets between (x, y) and (x, y+1) tiles
 
   Returns:
     force field acting on the mesh, same shape as 'x'
@@ -301,10 +330,94 @@ def elastic_tile_mesh(x: jnp.ndarray,
   return f_tot
 
 
-def optimize_coarse_mesh(cx,
-                         cy,
-                         cfg: Optional[mesh.IntegrationConfig] = None
-                        ) -> np.ndarray:
+def elastic_tile_mesh_3d(
+    x: jnp.ndarray,
+    cx: jnp.ndarray,
+    cy: jnp.ndarray,
+    k=None,
+    stride=None,
+    prefer_orig_order=False,
+    links=None,
+) -> jnp.ndarray:
+  """Computes force on nodes of a 3d tile mesh.
+
+  Unused arguments are defined for compatibility with the mesh solver.
+
+  Args:
+    x: [3, z, y, x] mesh where every node represents a tile
+    cx: desired XYZ offsets between (x, y, z) and (x+1, y, z) tiles
+    cy: desired XYZ offsets between (x, y, z) and (x, y+1, z) tiles
+    k: unused
+    stride: unused
+    prefer_orig_order: unused
+    links: unused
+
+  Returns:
+    force field acting on the mesh, same shape as 'x'
+  """
+  del k, stride, prefer_orig_order, links
+
+  f_tot = jnp.zeros_like(x)
+
+  zeros = jnp.zeros_like(x[0:1, :, :, :-1])
+  dx = x[0, :, :, 1:] - x[0, :, :, :-1]
+  fx = dx - cx[0, :, :, :-1]  # applies to (0,0)
+  f = jnp.concatenate([fx[None, ...], zeros, zeros], axis=0)
+  f = jnp.nan_to_num(f)
+  f_tot += jnp.pad(f, [[0, 0], [0, 0], [0, 0], [0, 1]])
+  f_tot -= jnp.pad(f, [[0, 0], [0, 0], [0, 0], [1, 0]])
+
+  zeros = jnp.zeros_like(x[0:1, :, :-1, :])
+  dy = x[1, :, 1:, :] - x[1, :, :-1, :]
+  fy = dy - cy[1, :, :-1, :]
+  f = jnp.concatenate([zeros, fy[None, ...], zeros], axis=0)
+  f = jnp.nan_to_num(f)
+  f_tot += jnp.pad(f, [[0, 0], [0, 0], [0, 1], [0, 0]])
+  f_tot -= jnp.pad(f, [[0, 0], [0, 0], [1, 0], [0, 0]])
+
+  # x offset from cy/cz
+  zeros = jnp.zeros_like(x[0:1, :, :-1, :])
+  dx = x[0, :, 1:, :] - x[0, :, :-1, :]
+  fx = dx - cy[0, :, :-1, :]
+  f = jnp.concatenate([fx[None, ...], zeros, zeros], axis=0)
+  f = jnp.nan_to_num(f)
+  f_tot += jnp.pad(f, [[0, 0], [0, 0], [0, 1], [0, 0]])
+  f_tot -= jnp.pad(f, [[0, 0], [0, 0], [1, 0], [0, 0]])
+
+  # y offset from cx/cz
+  zeros = jnp.zeros_like(x[0:1, :, :, :-1])
+  dy = x[1, :, :, 1:] - x[1, :, :, :-1]
+  fy = dy - cx[1, :, :, :-1]
+  f = jnp.concatenate([zeros, fy[None, ...], zeros], axis=0)
+  f = jnp.nan_to_num(f)
+  f_tot += jnp.pad(f, [[0, 0], [0, 0], [0, 0], [0, 1]])
+  f_tot -= jnp.pad(f, [[0, 0], [0, 0], [0, 0], [1, 0]])
+
+  # z offset from cx/cy
+  zeros = jnp.zeros_like(x[0:1, :, :, :-1])
+  dz = x[2, :, :, 1:] - x[2, :, :, :-1]
+  fz = dz - cx[2, :, :, :-1]
+  f = jnp.concatenate([zeros, zeros, fz[None, ...]], axis=0)
+  f = jnp.nan_to_num(f)
+  f_tot += jnp.pad(f, [[0, 0], [0, 0], [0, 0], [0, 1]])
+  f_tot -= jnp.pad(f, [[0, 0], [0, 0], [0, 0], [1, 0]])
+
+  zeros = jnp.zeros_like(x[0:1, :, :-1, :])
+  dz = x[2, :, 1:, :] - x[2, :, :-1, :]
+  fz = dz - cy[2, :, :-1, :]
+  f = jnp.concatenate([zeros, zeros, fz[None, ...]], axis=0)
+  f = jnp.nan_to_num(f)
+  f_tot += jnp.pad(f, [[0, 0], [0, 0], [0, 1], [0, 0]])
+  f_tot -= jnp.pad(f, [[0, 0], [0, 0], [1, 0], [0, 0]])
+  return f_tot
+
+
+def optimize_coarse_mesh(
+    cx,
+    cy,
+    cfg: Optional[mesh.IntegrationConfig] = None,
+    mesh_fn=elastic_tile_mesh,
+) -> np.ndarray:
   """Computes rough initial positions of the tiles.
 
   Args:
@@ -312,6 +425,8 @@ def optimize_coarse_mesh(cx,
     cy: desired XY offsets between (x, y) and (x, y+1) tiles
     cfg: integration config to use; if not specified, falls back to reasonable
       default settings
+    mesh_fn: function to use to for computing the forces acting
+      on mesh nodes
 
   Returns:
     optimized tile positions as an array of the same shape as cx/cy
@@ -327,7 +442,12 @@ def optimize_coarse_mesh(cx,
         num_iters=1000,
         max_iters=100000,
         stop_v_max=0.001,
-        dt_max=100)
+        dt_max=100,
+    )
+
+  def _mesh_force(x, *args, **kwargs):
+    return mesh_fn(x, cx, cy, *args, **kwargs)
+
   res = mesh.relax_mesh(
       # Initial state (all zeros) corresponds to the regular grid
       # layout with no overlap. Significant deviations from it are
@@ -335,7 +455,8 @@ def optimize_coarse_mesh(cx,
       np.zeros_like(cx),
       None,
       cfg,
-      mesh_force=ft.partial(elastic_tile_mesh, cx=cx, cy=cy))
+      mesh_force=_mesh_force,
+  )
 
   # Relative offsets from the baseline position as defined above.
   return np.array(res[0])
