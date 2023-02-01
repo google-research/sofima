@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2022 The Google Research Authors.
+# Copyright 2022-2023 The Google Research Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -69,6 +69,11 @@ class MeshTest(absltest.TestCase):
 
   def test_3d_equilibrium(self):
     x = np.zeros((3, 10, 10, 10))
+    f = np.array(mesh.elastic_mesh_3d(x, k=1.0, stride=40.0))
+    np.testing.assert_array_equal(x, f)
+
+    # Add a batch dimension.
+    x = np.zeros((3, 5, 10, 10, 10))
     f = np.array(mesh.elastic_mesh_3d(x, k=1.0, stride=40.0))
     np.testing.assert_array_equal(x, f)
 
