@@ -1,5 +1,5 @@
 # coding=utf-8
-# Copyright 2022 The Google Research Authors.
+# Copyright 2022-2023 The Google Research Authors.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -28,23 +28,67 @@ class MapUtilsTest(absltest.TestCase):
     coord_map = 2.5 * np.random.random((2, 1, 10, 10))
     coord_map[:, 0, 4, 3] = np.nan
     coord_map[:, 0, 2, 6] = np.nan
-    hy, hx = np.mgrid[:coord_map.shape[2], :coord_map.shape[3]]
-    query_points = (hx.ravel() + np.random.random(hx.size),
-                    hy.ravel() + np.random.random(hy.size))
+    hy, hx = np.mgrid[: coord_map.shape[2], : coord_map.shape[3]]
+    query_points = (
+        hx.ravel() + np.random.random(hx.size),
+        hy.ravel() + np.random.random(hy.size),
+    )
     valid = np.all(np.isfinite(coord_map[:, 0, ...]), axis=0)
     data_points = hx[valid], hy[valid]
 
     expected_u = interpolate.griddata(
-        data_points, coord_map[0, 0, ...][valid], query_points, method='linear')
+        data_points, coord_map[0, 0, ...][valid], query_points, method='linear'
+    )
     expected_v = interpolate.griddata(
-        data_points, coord_map[1, 0, ...][valid], query_points, method='linear')
+        data_points, coord_map[1, 0, ...][valid], query_points, method='linear'
+    )
 
-    u, v = map_utils._interpolate_points(data_points, query_points,
-                                         coord_map[0, 0, ...][valid],
-                                         coord_map[1, 0, ...][valid])
+    u, v = map_utils._interpolate_points(
+        data_points,
+        query_points,
+        coord_map[0, 0, ...][valid],
+        coord_map[1, 0, ...][valid],
+    )
 
     np.testing.assert_array_equal(u, expected_u)
     np.testing.assert_array_equal(v, expected_v)
+
+  def test_interpolate_points_3d(self):
+    coord_map = 2.5 * np.random.random((3, 10, 10, 10))
+    coord_map[:, 2:8, 4, 3] = np.nan
+    coord_map[:, 2:8, 2, 6] = np.nan
+    hz, hy, hx = np.mgrid[
+        : coord_map.shape[1], : coord_map.shape[2], : coord_map.shape[3]
+    ]
+    query_points = (
+        hx.ravel() + np.random.random(hx.size),
+        hy.ravel() + np.random.random(hy.size),
+        hz.ravel() + np.random.random(hz.size),
+    )
+    valid = np.all(np.isfinite(coord_map), axis=0)
+    data_points = hx[valid], hy[valid], hz[valid]
+
+    expected_u = interpolate.griddata(
+        data_points, coord_map[0, ...][valid], query_points, method='linear'
+    )
+    expected_v = interpolate.griddata(
+        data_points, coord_map[1, ...][valid], query_points, method='linear'
+    )
+    expected_w = interpolate.griddata(
+        data_points, coord_map[2, ...][valid], query_points, method='linear'
+    )
+
+    u, v, w = map_utils._interpolate_points(
+        data_points,
+        query_points,
+        coord_map[0, ...][valid],
+        coord_map[1, ...][valid],
+        coord_map[2, ...][valid],
+    )
+
+    np.testing.assert_array_equal(u, expected_u)
+    np.testing.assert_array_equal(v, expected_v)
+    np.testing.assert_array_equal(w, expected_w)
 
   def test_abs_rel_conversion(self):
     np.random.seed(11111)
@@ -54,13 +98,33 @@ class MapUtilsTest(absltest.TestCase):
     # relative -> absolute -> relative conversion.
     abs_coord = map_utils.to_absolute(rel_coord, stride)
     np.testing.assert_allclose(
-        map_utils.to_relative(abs_coord, stride), rel_coord)
+        map_utils.to_relative(abs_coord, stride), rel_coord
+    )
 
     # Same as above, but with a custom origin point.
     box = bounding_box.BoundingBox(start=(240, 280, 300), size=(50, 50, 1))
     abs_coord = map_utils.to_absolute(rel_coord, stride, box)
     np.testing.assert_allclose(
-        map_utils.to_relative(abs_coord, stride, box), rel_coord)
+        map_utils.to_relative(abs_coord, stride, box), rel_coord
+    )
+
+  def test_abs_rel_conversion_3d(self):
+    np.random.seed(11111)
+    rel_coord = np.random.uniform(-0.5, 0.5, [3, 25, 50, 50])
+    stride = 7
+
+    # relative -> absolute -> relative conversion.
+    abs_coord = map_utils.to_absolute(rel_coord, stride)
+    np.testing.assert_allclose(
+        map_utils.to_relative(abs_coord, stride), rel_coord
+    )
+
+    # Same as above, but with a custom origin point.
+    box = bounding_box.BoundingBox(start=(240, 280, 300), size=(50, 50, 25))
+    abs_coord = map_utils.to_absolute(rel_coord, stride, box)
+    np.testing.assert_allclose(
+        map_utils.to_relative(abs_coord, stride, box), rel_coord
+    )
 
   def test_fill_missing(self):
     hy, hx = np.mgrid[:50, :50]
@@ -81,7 +145,8 @@ class MapUtilsTest(absltest.TestCase):
 
     filled = map_utils.fill_missing(with_gap, extrapolate=True)
     np.testing.assert_array_almost_equal(
-        filled[1, 0, -1, :], coord_map[1, 0, -1, :], decimal=1)
+        filled[1, 0, -1, :], coord_map[1, 0, -1, :], decimal=1
+    )
 
     with_gap[...] = np.nan
     filled = map_utils.fill_missing(with_gap, invalid_to_zero=True)
@@ -99,7 +164,8 @@ class MapUtilsTest(absltest.TestCase):
 
     self.assertEqual(
         outer_box,
-        bounding_box.BoundingBox(start=(99, 199, 10), size=(53, 52, 1)))
+        bounding_box.BoundingBox(start=(99, 199, 10), size=(53, 52, 1)),
+    )
 
   def test_inner_box(self):
     box = bounding_box.BoundingBox(start=(100, 200, 10), size=(50, 50, 1))
@@ -111,7 +177,8 @@ class MapUtilsTest(absltest.TestCase):
 
     self.assertEqual(
         inner_box,
-        bounding_box.BoundingBox(start=(100, 196, 10), size=(50, 51, 1)))
+        bounding_box.BoundingBox(start=(100, 196, 10), size=(50, 51, 1)),
+    )
 
     coord_map = np.zeros([2, 1, 50, 50])
     coord_map[0, :, :, 0] = -9
@@ -119,7 +186,8 @@ class MapUtilsTest(absltest.TestCase):
     inner_box = map_utils.inner_box(coord_map, box, stride=10)
     self.assertEqual(
         inner_box,
-        bounding_box.BoundingBox(start=(100, 200, 10), size=(50, 50, 1)))
+        bounding_box.BoundingBox(start=(100, 200, 10), size=(50, 50, 1)),
+    )
 
   def test_invert_map(self):
     box = bounding_box.BoundingBox(start=(100, 200, 10), size=(50, 50, 1))
@@ -127,10 +195,23 @@ class MapUtilsTest(absltest.TestCase):
     coord_map = np.zeros([2, 1, 50, 50])
     coord_map[1, 0, ...] = np.sin(hx / 25) * 20
 
-    inv_map = map_utils.invert_map(coord_map, box, box, 40.)
+    inv_map = map_utils.invert_map(coord_map, box, box, 40.0)
 
     np.testing.assert_array_almost_equal(
-        inv_map[:, :, 1:, 1:], -coord_map[:, :, 1:, 1:], decimal=5)
+        inv_map[:, :, 1:, 1:], -coord_map[:, :, 1:, 1:], decimal=5
+    )
+
+  def test_invert_map_3d(self):
+    box = bounding_box.BoundingBox(start=(100, 200, 10), size=(50, 50, 5))
+    _, _, hx = np.mgrid[:5, :50, :50]
+    coord_map = np.zeros([3, 5, 50, 50])
+    coord_map[1, ...] = np.sin(hx / 25) * 20
+
+    inv_map = map_utils.invert_map(coord_map, box, box, 40.0)
+
+    np.testing.assert_array_almost_equal(
+        inv_map[:, 1:, 1:, 1:], -coord_map[:, 1:, 1:, 1:], decimal=5
+    )
 
   def test_resample_map(self):
     box = bounding_box.BoundingBox(start=(100, 200, 10), size=(50, 50, 1))
@@ -148,7 +229,8 @@ class MapUtilsTest(absltest.TestCase):
     dst_box = dst_box.scale([2, 2, 1.0])  # adjust for output stride
     resampled = map_utils.resample_map(coord_map, box, dst_box, 40, 20)
     np.testing.assert_array_almost_equal(
-        resampled[:, :, :-1, :-1], expected[:, :, 6:-1, 4:-1], decimal=2)
+        resampled[:, :, :-1, :-1], expected[:, :, 6:-1, 4:-1], decimal=2
+    )
 
   def test_compose_maps(self):
     box = bounding_box.BoundingBox(start=(100, 200, 10), size=(50, 50, 1))
@@ -160,11 +242,13 @@ class MapUtilsTest(absltest.TestCase):
 
     # Composing a map with its inversion should yield the identity transform.
     inverted = map_utils.invert_map(coord_map, box, box, stride)
-    composed = map_utils.compose_maps(coord_map, box, stride, inverted, box,
-                                      stride)[:, :, 1:-2, 1:-2]
+    composed = map_utils.compose_maps(
+        coord_map, box, stride, inverted, box, stride
+    )[:, :, 1:-2, 1:-2]
 
     np.testing.assert_array_almost_equal(
-        composed, np.zeros_like(composed), decimal=3)
+        composed, np.zeros_like(composed), decimal=3
+    )
 
   def test_compose_maps_fast(self):
     coord_map = np.zeros([2, 1, 60, 60])
@@ -179,15 +263,19 @@ class MapUtilsTest(absltest.TestCase):
 
     # coord_map is identity, so nothing should change in the flow.
     updated = np.array(
-        map_utils.compose_maps_fast(flow, box1.start[::-1], stride, coord_map,
-                                    box2.start[::-1], stride))
+        map_utils.compose_maps_fast(
+            flow, box1.start[::-1], stride, coord_map, box2.start[::-1], stride
+        )
+    )
     np.testing.assert_array_equal(updated, flow)
 
     # Now test with a non-zero coordinate map.
     coord_map[0, :, :, 7:] = -10
     updated = np.array(
-        map_utils.compose_maps_fast(flow, box1.start[::-1], stride, coord_map,
-                                    box2.start[::-1], stride))
+        map_utils.compose_maps_fast(
+            flow, box1.start[::-1], stride, coord_map, box2.start[::-1], stride
+        )
+    )
     flow[0, 0, :, 5:10] = -10
     flow[0, 0, :, 10:25] = -15
     flow[0, 0, :, 25:40] = 55
@@ -205,12 +293,19 @@ class MapUtilsTest(absltest.TestCase):
     # Composing a map with its inversion should yield the identity transform.
     inverted = map_utils.invert_map(coord_map, box, box, stride)
     composed = np.array(
-        map_utils.compose_maps_fast(coord_map, box.start[::-1], stride,
-                                    inverted, box.start[::-1],
-                                    stride))[:, :, 1:-2, 1:-2]
+        map_utils.compose_maps_fast(
+            coord_map,
+            box.start[::-1],
+            stride,
+            inverted,
+            box.start[::-1],
+            stride,
+        )
+    )[:, :, 1:-2, 1:-2]
 
     np.testing.assert_array_almost_equal(
-        composed, np.zeros_like(composed), decimal=3)
+        composed, np.zeros_like(composed), decimal=3
+    )
 
   def test_mask_irregular(self):
     coord_map = np.zeros([2, 50, 50])
