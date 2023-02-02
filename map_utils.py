@@ -75,7 +75,8 @@ def _interpolate_points(
 ) -> np.ndarray:
   """Interpolates Nd data.
 
-  This is like griddata(), but for multi-dimensional fields (defined by *args).
+  This is like griddata(), but for multi-dimensional fields (defined by
+  *values).
 
   Args:
     data_points: arrays of x, y, ... coordinates where the field components are
