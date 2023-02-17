@@ -20,6 +20,8 @@ single array of shape [2, N, y, x] where N is the number of tiles and the 1st
 dimension represents the XY position of the mesh node at (x, y).
 """
 
+from __future__ import annotations
+
 import enum
 import functools as ft
 from typing import Any, Mapping, Sequence, Union
