@@ -245,7 +245,7 @@ def elastic_mesh_3d(x: jnp.ndarray,
     fn = jnp.pad(f, pad_neg)
     f_tot -= fn
 
-  return f_tot
+  return f_tot  # pytype: disable=bad-return-type  # jax-ndarray
 
 
 @dataclasses_json.dataclass_json

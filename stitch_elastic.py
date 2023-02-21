@@ -601,7 +601,7 @@ def _update_mesh(
   nbor_mesh = jax.lax.dynamic_index_in_dim(x, nbor_idx, axis=1, keepdims=False)
   unused = 1
   # pylint: disable=g-long-lambda
-  return (
+  return (  # pytype: disable=bad-return-type  # jax-ndarray
       jax.lax.cond(
           nbor_idx == -1,  # invalid index?
           lambda _: mesh,  # nothing to update

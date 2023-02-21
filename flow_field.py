@@ -320,7 +320,7 @@ def _batched_xcorr(
   # section-to-section shift.
   center_offset = (np.array(pre_batch.shape[-len(patch_size):]) +
                    post_batch.shape[-len(patch_size):]) // 2 - 1
-  return (center_offset,
+  return (center_offset,  # pytype: disable=bad-return-type  # jax-ndarray
           masked_xcorr(
               pre_batch - pre_mean,
               post_batch - post_mean,
@@ -373,7 +373,7 @@ def batched_xcorr_peaks(
   center_offset, xcorr = _batched_xcorr(pre_image, post_image, pre_mask,
                                         post_mask, patch_size, starts, mean,
                                         post_patch_size)
-  peaks = _batched_peaks(xcorr, center_offset, min_distance, threshold_rel,
+  peaks = _batched_peaks(xcorr, center_offset, min_distance, threshold_rel,  # pytype: disable=wrong-arg-types  # jax-ndarray
                          peak_radius)
   return peaks
 
