@@ -310,8 +310,8 @@ def render_tiles(
     margin_overrides: Optional[Dict[Tuple[int, int], Tuple[int, int, int,
                                                            int]]] = None,
     return_warped_tiles: bool = False
-) -> Union[tuple[np.ndarray, np.ndarray], tuple[np.ndarray, np.ndarray, dict[
-    tuple[int, int], Any]]]:
+) -> Union[Tuple[np.ndarray, np.ndarray], Tuple[np.ndarray, np.ndarray, Dict[
+    Tuple[int, int], Any]]]:
   """Warps a collection of tiles into a larger image.
 
   All values in the 'tiles' and 'positions' maps are assumed to
