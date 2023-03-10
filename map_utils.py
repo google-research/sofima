@@ -631,6 +631,8 @@ def compose_maps_fast(
 
   stride1 = _as_vec(stride1, dim)
   stride2 = _as_vec(stride2, dim)
+  start1 = jnp.asarray(start1)
+  start2 = jnp.asarray(start2)
   origin = jnp.minimum(start1, start2)
 
   def _ref_grid(coord_map, start, stride):
