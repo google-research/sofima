@@ -169,7 +169,7 @@ def compute_flow_map3d(
           diff = s * np.round(isec_nbor.start[ax] / s) - isec_nbor.start[ax]
           off[ax] = -diff
 
-      nbor_box = nbor_box.adjusted_by(start=off)
+      nbor_box = nbor_box.translate(off)
       isec_curr, isec_nbor = _relative_intersection(curr_box, nbor_box)
 
       assert np.all(isec_curr.start % s == 0)
@@ -181,6 +181,8 @@ def compute_flow_map3d(
 
       pre = tile_pre[isec_curr.to_slice4d()].squeeze(axis=0)
       post = tile_post[isec_nbor.to_slice4d()].squeeze(axis=0)
+
+      assert pre.shape == post.shape
 
       f = mfc.flow_field(
           pre, post, patch_size=patch_size, step=stride, batch_size=batch_size
