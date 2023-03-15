@@ -14,8 +14,6 @@
 # limitations under the License.
 """Utilities for warping image and point data between coordinate systems."""
 
-from __future__ import annotations
-
 from concurrent import futures
 from typing import Any, Optional, Sequence, Union
 from connectomics.common import bounding_box

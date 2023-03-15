@@ -20,7 +20,7 @@ flow vectors have integer components).
 
 import collections
 import functools
-from typing import Optional, Sequence, Tuple, Union
+from typing import Optional, Sequence, Union
 from absl import logging
 from connectomics.common import geom_utils
 from connectomics.common import utils
@@ -255,7 +255,7 @@ def _batched_xcorr(
     starts: jnp.ndarray,
     mean: Optional[float],
     post_patch_size: Optional[Sequence[int]] = None
-) -> Tuple[np.ndarray, jnp.ndarray]:
+) -> tuple[np.ndarray, jnp.ndarray]:
   """Extracts a batch of patch pairs and cross-correlates them.
 
   Patches are extracted from matching locations in the pre/post images.
