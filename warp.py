@@ -233,7 +233,10 @@ def ndimage_warp(
   assert dim == len(stride)
   assert dim == len(overlap)
   assert dim == len(work_size)
-  assert dim == image.ndim
+  if dim != image.ndim:
+    raise ValueError(
+        f'Dimension mismatch: image: {image.ndim} vs coord map: {dim}'
+    )
 
   orig_to_low = None
   if image.dtype == np.uint64:
@@ -330,7 +333,7 @@ def render_tiles(
         dict[tuple[int, int], tuple[int, int, int, int]]
     ] = None,
     return_warped_tiles: bool = False,
-    tile_masks: Optional[dict[tuple[int, int], np.ndarray]] = None
+    tile_masks: Optional[dict[tuple[int, int], np.ndarray]] = None,
 ) -> Union[
     tuple[np.ndarray, np.ndarray],
     tuple[np.ndarray, np.ndarray, dict[tuple[int, int], Any]],
@@ -416,7 +419,7 @@ def render_tiles(
     if tile_masks is not None:
       tile_mask = tile_masks.get((tile_x, tile_y), None)
     if tile_mask is not None:
-      tile_mask = (tile_mask == 0)
+      tile_mask = tile_mask == 0
 
     tg_box = map_utils.outer_box(coord_map, map_box, stride[0])
     # Add context to avoid rounding issues.

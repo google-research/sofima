@@ -14,6 +14,7 @@
 # limitations under the License.
 """Processors for image warping and rendering."""
 
+from concurrent import futures
 from typing import Any, Sequence
 
 from absl import logging
@@ -134,7 +135,7 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
 
       StitchAndRender3dTiles._tile_boxes[i] = out_box, tg_box
 
-  def _get_dts(self, shape: ZYX, tx: int, ty: int):
+  def _get_dts(self, shape: ZYX, tx: int, ty: int) -> np.ndarray:
     # Ignore up to _margin pixels on tile edges, with the exception of the
     # tiles at the outer sides of the tile grid.
     mask = np.zeros(shape[1:], dtype=bool)
@@ -148,9 +149,101 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
       mask[...] = 1
 
     # Compute a (2d) distance transform of the mask, for use in blending.
-    dts = edt.edt(mask, black_border=True, parallel=0)[None, ...]
-    dts = np.repeat(dts.astype(np.float32), shape[0], axis=0)
-    return dts
+    return edt.edt(mask, black_border=True, parallel=0)
+
+  def _load_tile_images(
+      self,
+      box: bounding_box.BoundingBox,
+      tile_shape_zyx: ZYX,
+      volstores: dict[int, Any],
+      tpe: futures.Executor,
+  ) -> set[futures.Future[tuple[np.ndarray, Any]]]:
+    fs = set([])
+
+    # Bounding boxes for the tile and its mesh in its own coordinate system
+    # (with the tile placed at the origin).
+    image_box = bounding_box.BoundingBox(
+        start=(0, 0, 0), size=tile_shape_zyx[::-1]
+    )
+    map_box = bounding_box.BoundingBox(
+        start=(0, 0, 0),
+        size=StitchAndRender3dTiles._tile_meshes.shape[2:][::-1],
+    )
+
+    for i, (out_box, tg_box) in StitchAndRender3dTiles._tile_boxes.items():
+      sub_box = out_box.intersection(box)
+      if sub_box is None:
+        continue
+
+      logging.info('Processing source %r (%r)', i, out_box)
+
+      coord_map = StitchAndRender3dTiles._tile_meshes[:, i, ...]
+      tx, ty = StitchAndRender3dTiles._tile_idx_to_xy[i]
+
+      if i not in StitchAndRender3dTiles._inverted_meshes:
+        # Add context to avoid rounding issues in map inversion.
+        tg_box = tg_box.adjusted_by(start=(-1, -1, -1), end=(1, 1, 1))
+        inverted_map = map_utils.invert_map(
+            coord_map, map_box, tg_box, stride=self._stride
+        )
+        # Extrapolate only. The inverted map should not have any holes that
+        # can be filled through interpolation.
+        inverted_map = map_utils.fill_missing(
+            inverted_map, extrapolate=True, interpolate_first=False
+        )
+        StitchAndRender3dTiles._inverted_meshes[i] = tg_box, inverted_map
+      else:
+        tg_box, inverted_map = StitchAndRender3dTiles._inverted_meshes[i]
+
+      # Box which can be passed to ndimage_warp to render the *whole* tile.
+      # This is within a coordinate system where the source tile is
+      # placed at (0, 0, 0).
+      local_out_box = out_box.translate((
+          -tx * tile_shape_zyx[-1] - self._offset[0],
+          -ty * tile_shape_zyx[-2] - self._offset[1],
+          -self._offset[2],
+      ))
+
+      # Part of the region we can render with the current tile that is
+      # actually needed for the current output.
+      local_rel_box = sub_box.translate(-out_box.start)
+      local_warp_box = local_rel_box.translate(local_out_box.start)
+
+      # Part of the inverted mesh that is needed to render the current
+      # region of interest.
+      s = 1.0 / np.array(self._stride)[::-1]
+      local_map_box = local_warp_box.scale(s).adjusted_by(
+          start=(-2, -2, -2), end=(2, 2, 2)
+      )
+      local_map_box = local_map_box.intersection(tg_box)
+      if local_map_box is None:
+        continue
+
+      map_query_box = local_map_box.translate(-tg_box.start)
+      assert np.all(map_query_box.start >= 0)
+      sub_map = inverted_map[map_query_box.to_slice4d()]
+
+      # Part of the source image needed to render the current region
+      # of interest.
+      data_box = map_utils.outer_box(sub_map, local_map_box, self._stride, 1)
+      data_box = data_box.intersection(image_box)
+      if data_box is None:
+        continue
+
+      dts_2d = self._get_dts(tile_shape_zyx, tx, ty)
+      sub_dts = dts_2d[data_box.to_slice_tuple(0, 2)][None, ...]
+      sub_dts = np.repeat(sub_dts, data_box.size[2], axis=0)
+
+      # Schedule data loading.
+      context = inverted_map, tg_box, local_warp_box, sub_box, sub_dts, data_box
+      def _load(context=context, i=i):
+        data_box = context[-1]
+        image = volstores[i][data_box.to_slice3d()]
+        return image, context
+
+      fs.add(tpe.submit(_load))
+
+    return fs
 
   def process(
       self, subvol: subvolume.Subvolume
@@ -183,90 +276,54 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
     if mesh_init:
       self._collect_tile_boxes(tile_shape_zyx)
 
-    map_box = bounding_box.BoundingBox(
-        start=(0, 0, 0),
-        size=StitchAndRender3dTiles._tile_meshes.shape[2:][::-1],
-    )
-    image_box = bounding_box.BoundingBox(
-        start=(0, 0, 0), size=tile_shape_zyx[::-1]
-    )
-
     # For blending, accumulate (weighted) image data as floats. This will
     # be normalized and cast to the desired output type once the image is
     # rendered.
     img = np.zeros(subvol.data.shape[1:], dtype=np.float32)
     norm = np.zeros(subvol.data.shape[1:], dtype=np.float32)
 
-    for i, (out_box, tg_box) in StitchAndRender3dTiles._tile_boxes.items():
-      sub_box = out_box.intersection(box)
-      if sub_box is None:
-        continue
+    with futures.ThreadPoolExecutor(max_workers=2) as tpe:
+      fs = self._load_tile_images(box, tile_shape_zyx, volstores, tpe)
 
-      logging.info('Processing source %r (%r)', i, out_box)
+      for f in futures.as_completed(fs):
+        image, (
+            inverted_map,
+            tg_box,
+            local_warp_box,
+            sub_box,
+            sub_dts,
+            data_box,
+        ) = f.result()
 
-      coord_map = StitchAndRender3dTiles._tile_meshes[:, i, ...]
-      tx, ty = StitchAndRender3dTiles._tile_idx_to_xy[i]
-      dts = self._get_dts(tile_shape_zyx, tx, ty)
-
-      if i not in StitchAndRender3dTiles._inverted_meshes:
-        # Add context to avoid rounding issues in map inversion.
-        tg_box = tg_box.adjusted_by(start=(-1, -1, -1), end=(1, 1, 1))
-        inverted_map = map_utils.invert_map(
-            coord_map, map_box, tg_box, stride=self._stride
+        image = warp.ndimage_warp(
+            image,
+            inverted_map,
+            self._stride,
+            work_size=self._work_size,
+            overlap=(0, 0, 0),
+            order=self._order,
+            image_box=data_box,
+            map_box=tg_box,
+            out_box=local_warp_box,
+            parallelism=self._parallelism,
         )
-        # Extrapolate only. The inverted map should not have any holes that
-        # can be filled through interpolation.
-        inverted_map = map_utils.fill_missing(
-            inverted_map, extrapolate=True, interpolate_first=False
+
+        warped_dts = warp.ndimage_warp(
+            sub_dts,
+            inverted_map,
+            self._stride,
+            work_size=self._work_size,
+            overlap=(0, 0, 0),
+            image_box=data_box,
+            map_box=tg_box,
+            out_box=local_warp_box,
+            parallelism=self._parallelism,
         )
-        StitchAndRender3dTiles._inverted_meshes[i] = tg_box, inverted_map
-      else:
-        tg_box, inverted_map = StitchAndRender3dTiles._inverted_meshes[i]
 
-      # Box which can be passed to ndimage_warp to render the *whole* tile.
-      local_warp_box = out_box.translate((
-          -tx * tile_shape_zyx[-1] - self._offset[0],
-          -ty * tile_shape_zyx[-2] - self._offset[1],
-          0,
-      ))
+        out_rel_box = sub_box.translate(-box.start)
 
-      # Part of the region we can render with the current tile that is
-      # actually needed for the current output.
-      local_rel_box = sub_box.translate(-out_box.start)
-
-      # Same as above, but as part of the warp_box.
-      local_warp_box = local_rel_box.translate(local_warp_box.start)
-
-      image = volstores[i][:, :, :]
-      image = warp.ndimage_warp(
-          image,
-          inverted_map,
-          self._stride,
-          work_size=self._work_size,
-          overlap=(0, 0, 0),
-          order=self._order,
-          image_box=image_box,
-          map_box=tg_box,
-          out_box=local_warp_box,
-          parallelism=self._parallelism,
-      )
-
-      warped_dts = warp.ndimage_warp(
-          dts,
-          inverted_map,
-          self._stride,
-          work_size=self._work_size,
-          overlap=(0, 0, 0),
-          image_box=image_box,
-          map_box=tg_box,
-          out_box=local_warp_box,
-          parallelism=self._parallelism,
-      )
-
-      out_rel_box = sub_box.translate(-box.start)
-
-      img[out_rel_box.to_slice3d()] += image * warped_dts
-      norm[out_rel_box.to_slice3d()] += warped_dts
+        img[out_rel_box.to_slice3d()] += image * warped_dts
+        norm[out_rel_box.to_slice3d()] += warped_dts
 
     # Compute the (distance-from-tile-center-) weighted average of every
     # voxel. This results in smooth transitions between tiles, even if
