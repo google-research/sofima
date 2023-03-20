@@ -31,12 +31,13 @@ ZYX = tuple[int, int, int]
 XYZ = tuple[int, int, int]
 
 
-_tile_meshes = None
-_tile_idx_to_xy = None
-
-
 class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
   """Renders a volume by stitching 3d tiles placed on a 2d grid."""
+
+  _tile_meshes = None
+  _tile_idx_to_xy = None
+  _tile_boxes = {}
+  _inverted_meshes = {}
 
   crop_at_borders = False
 
@@ -94,48 +95,22 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
   def _open_tile_volume(self, tile_id: int) -> Any:
     """Returns a ZYX-shaped ndarray-like object representing the tile data."""
     raise NotImplementedError(
-        'This function needs to be defined in a subclass.')
+        'This function needs to be defined in a subclass.'
+    )
 
   def context(self):
     return (0, 0, 0), (0, 0, 0)
 
-  def process(
-      self, subvol: subvolume.Subvolume
-  ) -> subvolume_processor.SubvolumeOrMany:
-    box = subvol.bbox
-
-    global _tile_meshes, _tile_idx_to_xy
-
-    if _tile_meshes is None:
-      data_path = self._tile_mesh_path
-      with file.Open(data_path, 'rb') as f:
-        data = np.load(f, allow_pickle=True)
-        _tile_idx_to_xy = {v: k for k, v in data['key_to_idx'].item().items()}
-        _tile_meshes = data['x']
-        assert _tile_meshes.shape[1] == len(_tile_idx_to_xy)
-
-    volstores = {}
-    for i in range(_tile_meshes.shape[1]):
-      tile_id = self._key_to_idx[_tile_idx_to_xy[i]]
-      volstores[i] = self._open_tile_volume(tile_id)
-
-    # Bounding boxes representing a single tile placed the origin.
-    tile_shape_zyx = next(iter(volstores.values())).shape
+  def _collect_tile_boxes(self, tile_shape_zyx: ZYX):
     map_box = bounding_box.BoundingBox(
-        start=(0, 0, 0), size=_tile_meshes.shape[2:][::-1]
-    )
-    image_box = bounding_box.BoundingBox(
-        start=(0, 0, 0), size=tile_shape_zyx[::-1]
+        start=(0, 0, 0),
+        size=StitchAndRender3dTiles._tile_meshes.shape[2:][::-1],
     )
 
-    logging.info('Processing %r', box)
+    for i in range(StitchAndRender3dTiles._tile_meshes.shape[1]):
+      tx, ty = StitchAndRender3dTiles._tile_idx_to_xy[i]
 
-    # Find tiles contributing to the current output box.
-    sources = {}
-    for i in range(_tile_meshes.shape[1]):
-      tx, ty = _tile_idx_to_xy[i]
-
-      mesh = _tile_meshes[:, i, ...]
+      mesh = StitchAndRender3dTiles._tile_meshes[:, i, ...]
       tg_box = map_utils.outer_box(mesh, map_box, self._stride)
 
       # Region that can be rendered with the current tile, in global
@@ -157,11 +132,64 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
           ),
       )
 
-      sub_box = out_box.intersection(box)
-      if sub_box is None:
-        continue
+      StitchAndRender3dTiles._tile_boxes[i] = out_box, tg_box
 
-      sources[i] = sub_box, out_box
+  def _get_dts(self, shape: ZYX, tx: int, ty: int):
+    # Ignore up to _margin pixels on tile edges, with the exception of the
+    # tiles at the outer sides of the tile grid.
+    mask = np.zeros(shape[1:], dtype=bool)
+    if self._margin > 0:
+      x0 = self._margin if tx > 0 else 0
+      x1 = -self._margin if tx < self._tile_map.shape[-1] - 1 else -1
+      y0 = self._margin if ty > 0 else 0
+      y1 = -self._margin if ty < self._tile_map.shape[-2] - 1 else -1
+      mask[y0:y1, x0:x1] = 1
+    else:
+      mask[...] = 1
+
+    # Compute a (2d) distance transform of the mask, for use in blending.
+    dts = edt.edt(mask, black_border=True, parallel=0)[None, ...]
+    dts = np.repeat(dts.astype(np.float32), shape[0], axis=0)
+    return dts
+
+  def process(
+      self, subvol: subvolume.Subvolume
+  ) -> subvolume_processor.SubvolumeOrMany:
+    box = subvol.bbox
+    logging.info('Processing %r', box)
+
+    mesh_init = False
+
+    if StitchAndRender3dTiles._tile_meshes is None:
+      data_path = self._tile_mesh_path
+      with file.Open(data_path, 'rb') as f:
+        data = np.load(f, allow_pickle=True)
+        StitchAndRender3dTiles._tile_idx_to_xy = {
+            v: k for k, v in data['key_to_idx'].item().items()
+        }
+        StitchAndRender3dTiles._tile_meshes = data['x']
+        assert StitchAndRender3dTiles._tile_meshes.shape[1] == len(
+            StitchAndRender3dTiles._tile_idx_to_xy
+        )
+      mesh_init = True
+
+    volstores = {}
+    for i in range(StitchAndRender3dTiles._tile_meshes.shape[1]):
+      tile_id = self._key_to_idx[StitchAndRender3dTiles._tile_idx_to_xy[i]]
+      volstores[i] = self._open_tile_volume(tile_id)
+
+    # Bounding boxes representing a single tile placed the origin.
+    tile_shape_zyx = next(iter(volstores.values())).shape
+    if mesh_init:
+      self._collect_tile_boxes(tile_shape_zyx)
+
+    map_box = bounding_box.BoundingBox(
+        start=(0, 0, 0),
+        size=StitchAndRender3dTiles._tile_meshes.shape[2:][::-1],
+    )
+    image_box = bounding_box.BoundingBox(
+        start=(0, 0, 0), size=tile_shape_zyx[::-1]
+    )
 
     # For blending, accumulate (weighted) image data as floats. This will
     # be normalized and cast to the desired output type once the image is
@@ -169,44 +197,31 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
     img = np.zeros(subvol.data.shape[1:], dtype=np.float32)
     norm = np.zeros(subvol.data.shape[1:], dtype=np.float32)
 
-    # Start with sources that have maximal overlap with the current output box.
-    for i, (sub_box, out_box) in sorted(
-        sources.items(), key=lambda x: -np.prod(x[1][0].size)
-    ):
+    for i, (out_box, tg_box) in StitchAndRender3dTiles._tile_boxes.items():
+      sub_box = out_box.intersection(box)
+      if sub_box is None:
+        continue
+
       logging.info('Processing source %r (%r)', i, out_box)
 
-      coord_map = _tile_meshes[:, i, ...]
-      tx, ty = _tile_idx_to_xy[i]
+      coord_map = StitchAndRender3dTiles._tile_meshes[:, i, ...]
+      tx, ty = StitchAndRender3dTiles._tile_idx_to_xy[i]
+      dts = self._get_dts(tile_shape_zyx, tx, ty)
 
-      tg_box = map_utils.outer_box(coord_map, map_box, self._stride)
-      # Add context to avoid rounding issues in map inversion.
-      tg_box = tg_box.adjusted_by(start=(-1, -1, -1), end=(1, 1, 1))
-      inverted_map = map_utils.invert_map(
-          coord_map, map_box, tg_box, stride=self._stride
-      )
-      # Extrapolate only. The inverted map should not have any holes that can be
-      # filled through interpolation.
-      inverted_map = map_utils.fill_missing(
-          inverted_map, extrapolate=True, interpolate_first=False
-      )
-
-      image = volstores[i][:, :, :]
-
-      # Ignore up to _margin pixels on tiles, with the exception of the
-      # tiles at the outer edges of the tile grid.
-      mask = np.zeros(image.shape, dtype=bool)
-      if self._margin > 0:
-        x0 = self._margin if tx > 0 else 0
-        x1 = -self._margin if tx < self._tile_map.shape[-1] - 1 else -1
-        y0 = self._margin if ty > 0 else 0
-        y1 = -self._margin if ty < self._tile_map.shape[-2] - 1 else -1
-        mask[:, y0:y1, x0:x1] = 1
+      if i not in StitchAndRender3dTiles._inverted_meshes:
+        # Add context to avoid rounding issues in map inversion.
+        tg_box = tg_box.adjusted_by(start=(-1, -1, -1), end=(1, 1, 1))
+        inverted_map = map_utils.invert_map(
+            coord_map, map_box, tg_box, stride=self._stride
+        )
+        # Extrapolate only. The inverted map should not have any holes that
+        # can be filled through interpolation.
+        inverted_map = map_utils.fill_missing(
+            inverted_map, extrapolate=True, interpolate_first=False
+        )
+        StitchAndRender3dTiles._inverted_meshes[i] = tg_box, inverted_map
       else:
-        mask[...] = 1
-
-      # Commpute a (2d) distance transform of the mask, for use in blending.
-      dts = edt.edt(mask[0, ...], black_border=True, parallel=0)[None, ...]
-      dts = np.repeat(dts.astype(np.float32), mask.shape[0], axis=0)
+        tg_box, inverted_map = StitchAndRender3dTiles._inverted_meshes[i]
 
       # Box which can be passed to ndimage_warp to render the *whole* tile.
       local_warp_box = out_box.translate((
@@ -222,6 +237,7 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
       # Same as above, but as part of the warp_box.
       local_warp_box = local_rel_box.translate(local_warp_box.start)
 
+      image = volstores[i][:, :, :]
       image = warp.ndimage_warp(
           image,
           inverted_map,
@@ -235,7 +251,7 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
           parallelism=self._parallelism,
       )
 
-      dts = warp.ndimage_warp(
+      warped_dts = warp.ndimage_warp(
           dts,
           inverted_map,
           self._stride,
@@ -249,8 +265,8 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
 
       out_rel_box = sub_box.translate(-box.start)
 
-      img[out_rel_box.to_slice3d()] += image * dts
-      norm[out_rel_box.to_slice3d()] += dts
+      img[out_rel_box.to_slice3d()] += image * warped_dts
+      norm[out_rel_box.to_slice3d()] += warped_dts
 
     # Compute the (distance-from-tile-center-) weighted average of every
     # voxel. This results in smooth transitions between tiles, even if
