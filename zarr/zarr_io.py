@@ -3,6 +3,7 @@ from enum import Enum
 import numpy as np
 import tensorstore as ts
 
+from sofima import stitch_elastic
 
 class CloudStorage(Enum):
     """
@@ -16,15 +17,27 @@ class CloudStorage(Enum):
 class ZarrDataset:
     """
     Parameters for locating Zarr dataset living on the cloud.
+    Args:
+    cloud_storage: CloudStorage option 
+    bucket: Name of bucket
+    dataset_path: Path to directory containing zarr files within bucket
+    tile_names: List of zarr tiles to include in dataset. 
+                Order of tile_names defines an index that 
+                is expected to be used in tile_layout.
+    tile_layout: 2D array of indices that defines relative position of tiles.
+    downsample_exp: Level in image pyramid with each level
+                    downsampling the original resolution by 2**downsmaple_exp.
     """
+
     cloud_storage: CloudStorage
     bucket: str
     dataset_path: str
     tile_names: list[str]
+    tile_layout: np.ndarray
     downsample_exp: int
 
 
-def open_zarr_gcs(bucket: str, path: str):
+def open_zarr_gcs(bucket: str, path: str) -> ts.TensorStore:
     return ts.open({
         'driver': 'zarr',
         'kvstore': {
@@ -35,7 +48,7 @@ def open_zarr_gcs(bucket: str, path: str):
     }).result()
 
 
-def open_zarr_s3(bucket: str, path: str): 
+def open_zarr_s3(bucket: str, path: str) -> ts.TensorStore: 
     return ts.open({
         'driver': 'zarr',
         'kvstore': {
@@ -46,11 +59,12 @@ def open_zarr_s3(bucket: str, path: str):
 
 
 def load_zarr_data(params: ZarrDataset
-                   ) -> tuple[list[ts.TensorStore], tuple[int, int, int]]:
+                   ) -> tuple[list[ts.TensorStore], stitch_elastic.ShapeXYZ]:
     """
     Reads Zarr dataset from input location 
     and returns list of equally-sized tensorstores
     in matching order as ZarrDataset.tile_names and tile size. 
+    Tensorstores are cropped to tiles at origin to the smallest tile in the set.
     """
     
     def load_zarr(bucket: str, tile_location: str) -> ts.TensorStore:
@@ -80,8 +94,10 @@ def load_zarr_data(params: ZarrDataset
 
 def write_zarr(bucket: str, shape: list, path: str): 
     """ 
-    Shape must be 5D vector in tczyx order: 
-    Ex: [1, 1, 3551, 576, 576]
+    Args: 
+    bucket: Name of gcs cloud storage bucket 
+    shape: 5D vector in tczyx order, ex: [1, 1, 3551, 576, 576]
+    path: Output path inside bucket
     """
     
     return ts.open({

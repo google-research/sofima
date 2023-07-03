@@ -134,8 +134,8 @@ def compute_flow_map3d(
       curr_box = bounding_box.BoundingBox(start=(0, 0, 0), size=tile_shape)
       nbor_box = bounding_box.BoundingBox(
           start=(
-              offset[0],
-              offset[1],
+              tile_shape[0] * (1 - axis) + offset[0],
+              tile_shape[1] * axis + offset[1],
               offset[2],
           ),
           size=tile_shape,
