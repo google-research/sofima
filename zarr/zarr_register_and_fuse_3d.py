@@ -33,6 +33,7 @@ class SyncAdapter:
     self.tstore = tstore
 
   def __getitem__(self, ind):
+    print(ind)    # FIXME: remove later
     return np.array(self.tstore[ind])
 
   def __getattr__(self, attr):
@@ -99,7 +100,6 @@ class ZarrStitcher:
             for x, tile_id in enumerate(row):
                 self.tile_map[(x, y)] = self.tile_volumes[tile_id]
 
-
     def run_coarse_registration(self) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Runs coarse registration. 
@@ -155,8 +155,20 @@ class ZarrStitcher:
         # For axis 0, subtract tile_size x from the offset[0]
         # For axis 1, subtract tile_size y from the offset[1]
         # Tile size is readded inside of stitch_elastic.compute_flow_map3d.
-        cx[:, 0, :, :] = cx[:, 0, :, :] - np.array([self.tile_size_xyz[0], 0, 0])
-        cy[:, 0, :, :] = cy[:, 0, :, :] - np.array([0, self.tile_size_xyz[1], 0])
+        cx[np.isnan(cx)] = 0
+        cy[np.isnan(cy)] = 0
+        # cx[:, :, 1:, 1:] = cx[:, :, 1:, 1:] - np.array([self.tile_size_xyz[0], 0, 0])  # cx[b, ...] is in xyz order
+        # cy[:, :, 1:, 1:] = cy[:, :, 1:, 1:] - np.array([0, self.tile_size_xyz[1], 0])
+        
+        for y in range(0, cx.shape[-2:][0]):
+            for x in range(0, cx.shape[-2:][1] - 1):
+                cx[0, 0, y, x] = cx[0, 0, y, x] - self.tile_size_xyz[0]
+                cx[1, 0, y, x] = cx[1, 0, y, x]
+        
+        for y in range(0, cy.shape[-2:][0] - 1):
+            for x in range(0, cy.shape[-2:][1]):
+                cy[0, 0, y, x] = cy[0, 0, y, x]
+                cy[1, 0, y, x] = cy[1, 0, y, x] - self.tile_size_xyz[1]
 
         flow_x, offsets_x = stitch_elastic.compute_flow_map3d(_tile_map,
                                                                 self.tile_size_xyz, 
@@ -232,10 +244,10 @@ class ZarrStitcher:
             Multithreading. 
         """
 
-        data = np.load(tile_mesh_path)
+        data = np.load(tile_mesh_path, allow_pickle=True)
         fine_mesh = data['x']
-        fine_mesh_xy_to_index = data['key_to_idx']
-        stride_zyx = data['stride_zyx']
+        fine_mesh_xy_to_index = data['key_to_idx'].item()  # extract the dictionary
+        stride_zyx = tuple(data['stride_zyx'])
 
         if output_cloud_storage == zarr_io.CloudStorage.S3:
             raise NotImplementedError(
@@ -410,22 +422,32 @@ if __name__ == '__main__':
 
     # Application Outputs
     output_cloud_storage = zarr_io.CloudStorage.GCS
-    output_bucket = 'YOUR-BUCKET-HERE'
-    output_path = 'YOUR-OUTPUT-NAME.zarr' 
+    # output_bucket = 'YOUR-BUCKET-HERE'
+    # output_path = 'YOUR-OUTPUT-NAME.zarr' 
+    output_bucket = 'sofima-test-bucket-2' 
+    # output_path = 'fused_level_2_refactor.zarr'
+    output_path = 'tmp.zarr'
+
+    # What test runs do I need?
+    # Low res 2 defintely -- main path
+    # Low res 1 -- main path
+    # Low res 2 off path
+
 
     # Processing
-    save_mesh_path = 'solved_mesh.npy'
+    save_mesh_path = 'solved_mesh_refactor.npz'
     zarr_stitcher = ZarrStitcher(input_zarr)
     cx, cy, coarse_mesh = zarr_stitcher.run_coarse_registration()
-    zarr_stitcher.run_fine_registration(cx, 
-                                        cy, 
-                                        coarse_mesh, 
-                                        stride_zyx=(20, 20, 20),
-                                        save_mesh_path=save_mesh_path)
+    # zarr_stitcher.run_fine_registration(cx, 
+    #                                     cy, 
+    #                                     coarse_mesh, 
+    #                                     stride_zyx=(20, 20, 20),
+    #                                     save_mesh_path=save_mesh_path)
+    
     zarr_stitcher.run_fusion(output_cloud_storage=output_cloud_storage,
                             output_bucket=output_bucket,
                             output_path=output_path,
-                            downsample_exp=0,  # For full resolution fusion. 
+                            downsample_exp=2,  # For full resolution fusion. 
                             cx=cx,
                             cy=cy,
                             tile_mesh_path=save_mesh_path)
