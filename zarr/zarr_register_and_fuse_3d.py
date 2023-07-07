@@ -33,7 +33,6 @@ class SyncAdapter:
     self.tstore = tstore
 
   def __getitem__(self, ind):
-    print(ind)    # FIXME: remove later
     return np.array(self.tstore[ind])
 
   def __getattr__(self, attr):
@@ -60,12 +59,12 @@ class ZarrFusion(warp.StitchAndRender3dTiles):
                  stride_zyx: tuple[int, int, int],
                  offset_xyz: tuple[float, float, float],
                  parallelism=16) -> None:
-        super().__init__(zarr_params.tile_layout,
-                         tile_mesh_path,
-                         "",
-                         stride_zyx,
-                         offset_xyz, 
-                         parallelism)
+        super().__init__(tile_map=zarr_params.tile_layout,
+                         tile_mesh_path=tile_mesh_path,
+                         tile_pattern_path="",
+                         stride=stride_zyx,
+                         offset=offset_xyz, 
+                         parallelism=parallelism)
         self.zarr_params = zarr_params
     
     def _open_tile_volume(self, tile_id: int):
@@ -236,10 +235,11 @@ class ZarrStitcher:
         output_cloud_storage, output_bucket, output_path: 
             Output storage parameters  
         downsample_exp: 
-            Desired output resolution, 0 for highest resolution.
-        fine_mesh, fine_mesh_xy_to_index, stride_zyx:
-            Fine mesh offsets and accompanying metadata, 
-            output of coarse/fine registration.
+            Desired output resolution level, 0 for highest resolution.
+        cx, cy: 
+            Output of coarse registration
+        tile_mesh_path: 
+            Output of elastic registration
         parallelism: 
             Multithreading. 
         """
@@ -264,6 +264,7 @@ class ZarrStitcher:
                                                 self.input_zarr.bucket,
                                                 self.input_zarr.dataset_path, 
                                                 self.input_zarr.tile_names,
+                                                self.input_zarr.tile_layout,
                                                 downsample_exp)
 
             # Rescale fine mesh, stride
@@ -359,7 +360,6 @@ class ZarrStitcher:
             print('box {i}: {t1:0.2f} render  {t2:0.2f} write'.format(i=i, t1=t_render - t_start, t2=t_write - t_render))
 
 
-    # TODO fix this too 
     def run_fusion_on_coarse_mesh(self, 
                                   output_cloud_storage: zarr_io.CloudStorage,
                                   output_bucket: str, 
@@ -373,17 +373,31 @@ class ZarrStitcher:
                                   parallelism: int = 16) -> None:
         """
         Transforms coarse mesh into fine mesh before 
-        passing along to ZarrStitcher._run_fusion(...)
+        passing along to ZarrStitcher.run_fusion(...)
+
+        Inputs: 
+        output_cloud_storage, output_bucket, output_path: 
+            Output storage parameters  
+        downsample_exp: 
+            Desired output resolution level, 0 for highest resolution.
+        cx, cy, coarse_mesh: 
+            Output of coarse registration
+        stride_zyx: 
+            Grid size of elastic/fine mesh
+        save_mesh_path: 
+            Output path to save elastic mesh. 
+        parallelism: 
+            Fusion multithreading. 
         """
  
         # Create Fine Mesh Tile Index
-        fine_mesh_xy_to_index = {(tx, ty): i for i, (tx, ty) in enumerate(self.tile_map.keys())}
+        fine_mesh_xy_to_index = {(tx, ty): i for i, (tx, ty) in enumerate(list(self.tile_map.keys()))}
 
         # Convert Coarse Mesh into Fine Mesh
         dim = len(stride_zyx)
         mesh_shape = (np.array(self.tile_size_xyz[::-1]) // stride_zyx).tolist()
         fine_mesh = np.zeros([dim, len(fine_mesh_xy_to_index)] + mesh_shape, dtype=np.float32)
-        for (tx, ty) in self.tile_map.keys(): 
+        for (tx, ty) in list(self.tile_map.keys()): 
             fine_mesh[:, fine_mesh_xy_to_index[tx, ty], ...] = coarse_mesh[:, 0, ty, tx].reshape(
             (dim,) + (1,) * dim)
     
@@ -422,32 +436,34 @@ if __name__ == '__main__':
 
     # Application Outputs
     output_cloud_storage = zarr_io.CloudStorage.GCS
-    # output_bucket = 'YOUR-BUCKET-HERE'
-    # output_path = 'YOUR-OUTPUT-NAME.zarr' 
-    output_bucket = 'sofima-test-bucket-2' 
-    # output_path = 'fused_level_2_refactor.zarr'
-    output_path = 'tmp.zarr'
-
-    # What test runs do I need?
-    # Low res 2 defintely -- main path
-    # Low res 1 -- main path
-    # Low res 2 off path
-
+    output_bucket = 'YOUR-BUCKET-HERE'
+    output_path = 'YOUR-OUTPUT-NAME.zarr' 
+    # output_bucket = 'sofima-test-bucket' 
+    # output_path = 'fused_level_2_refactor_skip.zarr'
 
     # Processing
     save_mesh_path = 'solved_mesh_refactor.npz'
     zarr_stitcher = ZarrStitcher(input_zarr)
     cx, cy, coarse_mesh = zarr_stitcher.run_coarse_registration()
-    # zarr_stitcher.run_fine_registration(cx, 
-    #                                     cy, 
-    #                                     coarse_mesh, 
-    #                                     stride_zyx=(20, 20, 20),
-    #                                     save_mesh_path=save_mesh_path)
-    
+    zarr_stitcher.run_fine_registration(cx, 
+                                        cy, 
+                                        coarse_mesh, 
+                                        stride_zyx=(20, 20, 20),
+                                        save_mesh_path=save_mesh_path)
     zarr_stitcher.run_fusion(output_cloud_storage=output_cloud_storage,
                             output_bucket=output_bucket,
                             output_path=output_path,
-                            downsample_exp=2,  # For full resolution fusion. 
+                            downsample_exp=1,  # 0 for full resolution fusion. 
                             cx=cx,
                             cy=cy,
                             tile_mesh_path=save_mesh_path)
+
+    # zarr_stitcher.run_fusion_on_coarse_mesh(output_cloud_storage=output_cloud_storage,
+    #                                         output_bucket=output_bucket,
+    #                                         output_path=output_path, 
+    #                                         downsample_exp=2,
+    #                                         cx=cx, 
+    #                                         cy=cy,
+    #                                         coarse_mesh=coarse_mesh,
+    #                                         stride_zyx=(20, 20, 20),
+    #                                         save_mesh_path='solved_mesh_refactor_skip.npz')
