@@ -209,8 +209,8 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
       local_rel_box = sub_box.translate(-out_box.start)
       local_warp_box = local_rel_box.translate(local_out_box.start)
 
-      # Part of the inverted mesh that is needed to render the current
-      # region of interest.
+      # Part of the inverted mesh that is needed to render 
+      # the current region of interest.
       s = 1.0 / np.array(self._stride)[::-1]
       local_map_box = local_warp_box.scale(s).adjusted_by(
           start=(-2, -2, -2), end=(2, 2, 2)
