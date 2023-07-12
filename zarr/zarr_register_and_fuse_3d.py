@@ -95,7 +95,7 @@ class ZarrStitcher:
         self.tile_layout = input_zarr.tile_layout
 
         self.tile_map: dict[tuple[int, int], ts.TensorStore] = {}
-        for y, row in enumerate(tile_layout):
+        for y, row in enumerate(self.tile_layout):
             for x, tile_id in enumerate(row):
                 self.tile_map[(x, y)] = self.tile_volumes[tile_id]
 
