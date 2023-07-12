@@ -13,7 +13,7 @@ from connectomics.volume import subvolume
 from sofima import coarse_registration, flow_utils, stitch_elastic, stitch_rigid, map_utils, mesh
 from sofima.processor import warp
 
-import zarr_io
+from sofima.zarr import zarr_io
 
 # NOTE:
 # - SOFIMA/ZarrStitcher follows following basis convention:  
