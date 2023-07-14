@@ -20,10 +20,7 @@ from connectomics.common import bounding_box
 from connectomics.common import box_generator
 from connectomics.segmentation import labels
 # pylint:disable=g-import-not-at-top
-try:
-  from cvx2 import latest as cvx2
-except ImportError:
-  import cv2 as cvx2  # pytype:disable=import-error
+import cv2 as cv
 import numpy as np
 from scipy import interpolate
 from scipy import ndimage
@@ -32,12 +29,12 @@ from sofima import map_utils
 # pylint:enable=g-import-not-at-top
 
 
-def _cvx2_interpolation(inter_scheme: str):
+def _cv_interpolation(inter_scheme: str):
   inter_map = {
-      'nearest': cvx2.INTER_NEAREST,
-      'linear': cvx2.INTER_LINEAR,
-      'cubic': cvx2.INTER_CUBIC,
-      'lanczos': cvx2.INTER_LANCZOS4,
+      'nearest': cv.INTER_NEAREST,
+      'linear': cv.INTER_LINEAR,
+      'cubic': cv.INTER_CUBIC,
+      'lanczos': cv.INTER_LANCZOS4,
   }
   return inter_map[inter_scheme]
 
@@ -95,7 +92,7 @@ def warp_subvolume(
 
   # Segmentation warping.
   if image.dtype == np.uint64:
-    interpolation = cvx2.INTER_NEAREST
+    interpolation = cv.INTER_NEAREST
     image, orig_to_low = labels.make_contiguous(image)
     assert np.max(image) < 2**31
     assert np.min(image) >= 0
@@ -105,9 +102,9 @@ def warp_subvolume(
   else:
     orig_to_low = None
     if interpolation is None:
-      interpolation = cvx2.INTER_LANCZOS4
+      interpolation = cv.INTER_LANCZOS4
     elif isinstance(interpolation, str):
-      interpolation = _cvx2_interpolation(interpolation)
+      interpolation = _cv_interpolation(interpolation)
 
     orig_dtype = image.dtype
     if image.dtype == np.uint32:
@@ -141,10 +138,7 @@ def warp_subvolume(
   )
   out_y, out_x = np.mgrid[: out_box.size[1], : out_box.size[0]]
 
-  try:
-    maptype = cvx2.CVX_16SC2
-  except AttributeError:
-    maptype = cvx2.CV_16SC2
+  maptype = cv.CV_16SC2
 
   def _warp_section(z):
     dense_x = interpolate.RegularGridInterpolator(
@@ -158,15 +152,15 @@ def warp_subvolume(
     dx = dense_x((out_y, out_x)).astype(np.float32)
     dy = dense_y((out_y, out_x)).astype(np.float32)
 
-    dx, dy = cvx2.convertMaps(
+    dx, dy = cv.convertMaps(
         dx,
         dy,
         dstmap1type=maptype,
-        nninterpolation=(interpolation == cvx2.INTER_NEAREST),
+        nninterpolation=(interpolation == cv.INTER_NEAREST),
     )
 
     for c in range(0, image.shape[0]):
-      warped[c, z, ...] = cvx2.remap(
+      warped[c, z, ...] = cv.remap(
           image[c, z, ...], dx, dy, interpolation=interpolation
       )
 
