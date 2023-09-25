@@ -519,7 +519,7 @@ def _apply_flow(
     nbor_flow_3d = nbor_flow[:, None, ...]
     nbor_mesh_3d = nbor_mesh[:, None, ...]
 
-  update = map_utils.compose_maps_fast(
+  update = map_utils.compose_maps_fast(  # pytype: disable=wrong-arg-types  # jnp-type
       nbor_flow_3d,
       start,
       stride,
