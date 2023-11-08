@@ -104,7 +104,7 @@ def reconcile_flows(flows: Sequence[np.ndarray], max_gradient: float,
     # Try to fill any invalid values.
     m = np.repeat(np.isnan(ret[0:1, ...]), ret.shape[0], 0)
     if ret.shape[0] == 3:
-      m &= np.repeat(f[2:3, ...] >= min_delta_z, 3, 0)
+      m &= np.repeat(np.abs(f[2:3, ...]) >= min_delta_z, 3, 0)
     ret[m] = f[m]
 
   if max_gradient > 0:
