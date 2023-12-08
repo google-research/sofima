@@ -18,7 +18,10 @@ from typing import Any, Mapping, MutableMapping, Optional, Sequence
 
 from connectomics.common import bounding_box
 from connectomics.common import opencv_utils
-from connectomics.volume.decorators import Decorator  # pylint: disable=g-importing-member
+# pylint: disable=g-importing-member
+from connectomics.volume.decorators import adjust_schema_for_virtual_chunked
+from connectomics.volume.decorators import Decorator
+# pylint: enable=g-importing-member
 import gin
 import numpy as np
 import scipy.ndimage
@@ -205,7 +208,8 @@ class WarpAffine(Decorator):
         chunksize.append(dim.size)
       else:
         chunksize.append(1)
-    json = input_ts.schema.to_json()
+    schema = adjust_schema_for_virtual_chunked(input_ts.schema)
+    json = schema.to_json()
     json['chunk_layout']['read_chunk']['shape'] = chunksize
     json['chunk_layout']['write_chunk']['shape'] = chunksize
 
@@ -302,7 +306,8 @@ class WarpCoordMap(Decorator):
         chunksize.append(dim.size)
       else:
         chunksize.append(1)
-    json = input_ts.schema.to_json()
+    schema = adjust_schema_for_virtual_chunked(input_ts.schema)
+    json = schema.to_json()
     json['chunk_layout']['read_chunk']['shape'] = chunksize
     json['chunk_layout']['write_chunk']['shape'] = chunksize
 

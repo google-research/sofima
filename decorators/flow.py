@@ -19,6 +19,7 @@ from typing import Any, Mapping, MutableMapping, Optional, Sequence
 from connectomics.common import jax_utils
 # pylint: disable=g-importing-member
 from connectomics.volume.decorators import adjust_schema_for_chunksize
+from connectomics.volume.decorators import adjust_schema_for_virtual_chunked
 from connectomics.volume.decorators import Decorator
 from connectomics.volume.decorators import Filter
 # pylint: enable=g-importing-member
@@ -73,6 +74,7 @@ class CleanFlowFilter(Filter):
     schema = input_ts.schema
     if self._min_chunksize is not None:
       schema = adjust_schema_for_chunksize(schema, self._min_chunksize)
+    schema = adjust_schema_for_virtual_chunked(schema)
 
     # Remove non-spatial dimensions from `fc`-dimension (0th).
     json = schema.to_json()
