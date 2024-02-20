@@ -222,6 +222,7 @@ class OptimFlow(Decorator):
             'image dimension {d} must at least have size 2 but has size: ' +
             f'{input_ts.domain[d].size}.')
 
+    input_mask_ts = None
     if self._input_mask_spec is not None:
       input_mask_ts = ts.open(self._input_mask_spec).result()
       if input_ts.domain.labels != input_mask_ts.domain.labels:
@@ -233,6 +234,7 @@ class OptimFlow(Decorator):
             'Input TS and input mask TS must have same shape, but they are ' +
             f'{input_ts.shape} and {input_mask_ts.shape}.')
 
+    fixed_mask_ts = None
     if self._fixed_mask_spec is not None:
       fixed_mask_ts = ts.open(self._fixed_mask_spec).result()
       if input_ts.domain.labels != fixed_mask_ts.domain.labels:
@@ -260,14 +262,14 @@ class OptimFlow(Decorator):
       read_domain = ts.IndexDomain(read_domain)
 
       pre_mask = None
-      if self._input_mask_spec is not None:
+      if input_mask_ts is not None:
         pre_mask = np.array(
             input_mask_ts[read_domain], dtype=bool).squeeze().T
         if self._invert_masks:
           pre_mask = ~pre_mask  # pylint: disable=invalid-unary-operand-type
 
       post_mask = None
-      if self._fixed_mask_spec is not None:
+      if fixed_mask_ts is not None:
         post_mask = np.array(
             fixed_mask_ts[read_domain], dtype=bool).squeeze().T
         if self._invert_masks:
