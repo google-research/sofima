@@ -31,6 +31,17 @@ JsonSpec = Mapping[str, Any]
 MutableJsonSpec = MutableMapping[str, Any]
 
 
+def _adjust_read_domain(
+    domain: ts.IndexDomain, ds: ts.TensorStore) -> ts.IndexDomain:
+  read_domain = list(domain)
+  for d in range(4):
+    read_domain[d] = ts.Dim(
+        inclusive_min=0,
+        exclusive_max=ds.shape[d],
+        label=ds.domain.labels[d])
+  return ts.IndexDomain(read_domain)
+
+
 @gin.register
 class ComposeCoordMaps(Decorator):
   """Compose coordinate maps stored in TensorStores."""
@@ -69,16 +80,15 @@ class ComposeCoordMaps(Decorator):
       raise ValueError(
           'Input TS and coord map TS must have same labels, but they are ' +
           f'{input_ts.domain.labels} and {coord_map_ts.domain.labels}.')
-    if input_ts.shape != coord_map_ts.shape:
-      raise ValueError(
-          'Input TS and coord map TS must have same shape, but they are ' +
-          f'{input_ts.shape} and {coord_map_ts.shape}.')
 
     def warp_fn(domain: ts.IndexDomain, array: np.ndarray,
                 unused_read_params: ts.VirtualChunkedReadParameters):
+      read_domain_input = _adjust_read_domain(domain, input_ts)
+      read_domain_coord_map = _adjust_read_domain(domain, coord_map_ts)
+
       array[...] = compose_maps(
-          map1=np.array(input_ts[domain]).squeeze(),
-          map2=np.array(coord_map_ts[domain]).squeeze(),
+          map1=np.array(input_ts[read_domain_input]).squeeze(),
+          map2=np.array(coord_map_ts[read_domain_coord_map]).squeeze(),
           **self._compose_args).reshape(array.shape)
 
     chunksize = []
