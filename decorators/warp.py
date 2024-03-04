@@ -14,6 +14,7 @@
 # limitations under the License.
 """Decorators for image warping and rendering."""
 
+import functools
 from typing import Any, Mapping, MutableMapping, Optional, Sequence
 
 from connectomics.common import bounding_box
@@ -220,6 +221,8 @@ class WarpAffine(Decorator):
 def _warp_coord_map(
     img_xyz: np.ndarray,
     coord_map: np.ndarray,
+    mode: str = 'constant',
+    cval: float | int = 0.0,
     **warp_args):
   """Warp by coord map in 3D.
   """
@@ -231,6 +234,8 @@ def _warp_coord_map(
   res_zyx = sofima.warp.ndimage_warp(
       image=img_xyz.T,
       coord_map=coord_map,
+      map_coordinates=functools.partial(
+          scipy.ndimage.map_coordinates, cval=cval, mode=mode),
       **warp_args)
   return res_zyx.T
 
