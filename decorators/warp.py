@@ -223,6 +223,7 @@ def _warp_coord_map(
     coord_map: np.ndarray,
     mode: str = 'constant',
     cval: float | int = 0.0,
+    scale_xyz: Optional[Sequence[float]] = None,
     **warp_args):
   """Warp by coord map in 3D.
   """
@@ -231,6 +232,8 @@ def _warp_coord_map(
     raise RuntimeError('Only 3D images are supported.')
   if 'work_size' not in warp_args:
     warp_args['work_size'] = img_xyz.shape
+  if scale_xyz is not None:
+    coord_map = coord_map * np.array(scale_xyz).reshape(-1, 1, 1, 1)
   res_zyx = sofima.warp.ndimage_warp(
       image=img_xyz.T,
       coord_map=coord_map,
