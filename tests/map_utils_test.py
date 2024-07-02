@@ -189,6 +189,19 @@ class MapUtilsTest(absltest.TestCase):
         bounding_box.BoundingBox(start=(100, 200, 10), size=(50, 50, 1)),
     )
 
+  def test_inner_box3d(self):
+    box = bounding_box.BoundingBox(start=(100, 200, 200), size=(50, 50, 50))
+    coord_map = np.zeros([3, 50, 50, 50])
+    coord_map[2, ...] = -30
+    coord_map[2, 0, :, :] = -40
+    coord_map[2, -1, :, :] = -25
+    inner_box = map_utils.inner_box(coord_map, box, stride=10)
+
+    self.assertEqual(
+        inner_box,
+        bounding_box.BoundingBox(start=(100, 200, 196), size=(50, 50, 51)),
+    )
+
   def test_invert_map(self):
     box = bounding_box.BoundingBox(start=(100, 200, 10), size=(50, 50, 1))
     _, hx = np.mgrid[:50, :50]
