@@ -332,8 +332,7 @@ class InvertMap(subvolume_processor.SubvolumeProcessor):
         box of the map; a typical use case is when inverting data for a complete
         section in which case there are no other work items that could provide
         data for areas outside of the inner box
-      input_volinfo: unused; VolumeInfo for the volume with the coordinate map
-        to invert
+      input_volinfo: VolumeInfo for the volume with the coordinate map to invert
     """
     self._stride = stride
     self._crop_output = crop_output
