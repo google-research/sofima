@@ -22,6 +22,7 @@ from connectomics.common import utils
 from connectomics.volume import mask
 from connectomics.volume import subvolume
 from connectomics.volume import subvolume_processor
+import dataclasses_json
 import numpy as np
 from sofima import flow_field
 
@@ -48,32 +49,37 @@ class EstimateFlow(subvolume_processor.SubvolumeProcessor):
   centered at 'x' is stored at 'x' // patch_size.
   """
 
+  @dataclasses_json.dataclass_json
   @dataclasses.dataclass(eq=True)
   class EstimateFlowConfig(utils.NPDataClassJsonMixin):
-    """Configuration for EstimateFlow."""
+    """Configuration for EstimateFlow.
 
-    # Patch size in pixels, divisible by 'stride'
+    Attributes:
+      patch_size: Patch size in pixels, divisible by 'stride'
+      stride: XY stride size in pixels
+      z_stride: Z stride size in pixels (Δz)
+      fixed_current: Whether to compute flow against a fixed current section
+        (first/last section of the subvolume for negative/positive z_stride
+        respectively); this is useful for coming-in regions.
+      mask_configs: mask.MaskConfigs specifying a mask to exclude some voxels
+        from the flow calculation; this mask should have the same resolution and
+        geometry as the input data volume.
+      mask_only_for_patch_selection: Whether to only use mask to decide for
+        which patch pairs to compute flow.
+      selection_mask_configs: MaskConfigs in text format specifying a mask the
+        positive entries of which indicate locations for which flow should be
+        computed; this mask should have the same resolution and geometry as the
+        output flow volume.
+      batch_size: Max number of patches to process in parallel.
+    """
+
     patch_size: int
-    # XY stride size in pixels
     stride: int
-    # Z stride size in pixels (Δz)
     z_stride: int = 1
-    # Whether to compute flow against a fixed current section (first/last
-    # section of the subvolume for negative/positive z_stride respectively);
-    # this is useful for coming-in regions.
     fixed_current: bool = False
-    # mask.MaskConfigs specifying a mask to exclude some voxels from the flow
-    # calculation; this mask should have the same resolution and geometry as the
-    # input data volume.
     mask_configs: Optional[mask.MaskConfigs] = None
-    # Whether to only use mask to decide for which patch pairs to compute flow.
     mask_only_for_patch_selection: bool = False
-    # MaskConfigs in text format specifying a mask the positive entries of which
-    # indicate locations for which flow should be computed; this mask should
-    # have the same resolution and geometry as the output flow volume.
     selection_mask_configs: Optional[mask.MaskConfigs] = None
-    # Max number of patches to process in parallel input_volinfo: VolumeInfo for
-    # the input volume.
     batch_size: int = 1024
 
   _config: EstimateFlowConfig
@@ -86,6 +92,7 @@ class EstimateFlow(subvolume_processor.SubvolumeProcessor):
       input_volinfo_or_ts_spec: unused
     """
 
+    del input_volinfo_or_ts_spec
     self._config = config
 
     assert config.patch_size % config.stride == 0
