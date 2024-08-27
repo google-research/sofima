@@ -141,7 +141,11 @@ class EstimateFlow(subvolume_processor.SubvolumeProcessor):
     sel_mask = initial_mask = None
 
     if config.mask_configs is not None:
-      initial_mask = mask.build_mask(config.mask_configs, subvol.bbox)
+      # TODO(blakely): Remove the unused lambda here and below when the external
+      # paths support DecoratorSpecs.
+      initial_mask = mask.build_mask(
+          config.mask_configs, subvol.bbox, lambda x: x
+      )
 
     if config.selection_mask_configs is not None:
       cropped_bbox = self.crop_box(subvol.bbox)
@@ -156,7 +160,9 @@ class EstimateFlow(subvolume_processor.SubvolumeProcessor):
           subvol.bbox.size - xy * config.patch_size + xy * config.stride
       ) / scale
       sel_box = bounding_box.BoundingBox(sel_start, sel_size)
-      sel_mask = mask.build_mask(config.selection_mask_configs, sel_box)
+      sel_mask = mask.build_mask(
+          config.selection_mask_configs, sel_box, lambda x: x
+      )
 
     def _estimate_flow(z_prev, z_curr):
       mask_prev = mask_curr = None
