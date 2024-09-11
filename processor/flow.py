@@ -86,7 +86,7 @@ class EstimateFlow(subvolume_processor.SubvolumeProcessor):
     stride: int
     z_stride: int = 1
     fixed_current: bool = False
-    mask_configs: mask_lib.MaskConfigs | None = None
+    mask_configs: str | mask_lib.MaskConfigs | None = None
     mask_only_for_patch_selection: bool = False
     selection_mask_configs: mask_lib.MaskConfigs | None = None
     batch_size: int = 1024
@@ -103,8 +103,31 @@ class EstimateFlow(subvolume_processor.SubvolumeProcessor):
 
     del input_volinfo_or_ts_spec
     self._config = config
-
     assert config.patch_size % config.stride == 0
+
+    if config.mask_configs is not None:
+      if isinstance(config.mask_configs, str):
+        config.mask_configs = self._get_mask_configs(config.mask_configs)
+
+    if config.selection_mask_configs is not None:
+      if isinstance(config.selection_mask_configs, str):
+        config.selection_mask_configs = self._get_mask_configs(
+            config.selection_mask_configs
+        )
+
+  def _get_mask_configs(self, mask_configs: str) -> mask_lib.MaskConfigs:
+    raise NotImplementedError(
+        'This function needs to be defined in a subclass.'
+    )
+
+  def _build_mask(
+      self,
+      mask_configs: mask_lib.MaskConfigs,
+      box: bounding_box.BoundingBoxBase,
+  ) -> Any:
+    raise NotImplementedError(
+        'This function needs to be defined in a subclass.'
+    )
 
   def output_type(self, input_type):
     return np.float32
@@ -114,19 +137,18 @@ class EstimateFlow(subvolume_processor.SubvolumeProcessor):
     return subvolume_processor.SuggestedXyz(size, size, 16)
 
   def context(self):
-    config = self._config
-    pre = config.patch_size // 2
-    post = config.patch_size - pre
-    if config.fixed_current:
-      if config.z_stride > 0:
-        return (pre, pre, 0), (post, post, config.z_stride)
+    pre = self._config.patch_size // 2
+    post = self._config.patch_size - pre
+    if self._config.fixed_current:
+      if self._config.z_stride > 0:
+        return (pre, pre, 0), (post, post, self._config.z_stride)
       else:
-        return (pre, pre, -config.z_stride), (post, post, 0)
+        return (pre, pre, -self._config.z_stride), (post, post, 0)
     else:
-      if config.z_stride > 0:
-        return (pre, pre, config.z_stride), (post, post, 0)
+      if self._config.z_stride > 0:
+        return (pre, pre, self._config.z_stride), (post, post, 0)
       else:
-        return (pre, pre, 0), (post, post, -config.z_stride)
+        return (pre, pre, 0), (post, post, -self._config.z_stride)
 
   def num_channels(self, input_channels):
     del input_channels
@@ -136,51 +158,37 @@ class EstimateFlow(subvolume_processor.SubvolumeProcessor):
     )
 
   def pixelsize(self, psize):
-    psize = np.asarray(psize).copy().astype(np.float32)
+    psize = psize.copy().astype(np.float32)
     psize[:2] *= self._config.stride
     return psize
 
-  def process(self, subvol: subvolume.Subvolume) -> subvolume.Subvolume:
-    # TODO(blakely): Determine if Dask supports metrics, and if so, create a
-    # shim that supports both Beam and Dask metrics.
-    config = self._config
+  def process(self, subvol: Subvolume) -> SubvolumeOrMany:
+    box = subvol.bbox
+    input_ndarray = subvol.data
+    beam_utils.counter(self.namespace, 'subvolumes-started').inc()
 
-    assert subvol.data.shape[0], 'Input volume should have 1 channel.'
-    image = subvol.data[0, ...]
-    sel_mask = initial_mask = None
+    assert input_ndarray.shape[0], 'Input volume should have 1 channel.'
+    image = input_ndarray[0, ...]
+    sel_mask = mask = None
 
-    if config.mask_configs is not None:
-      # TODO(blakely): Remove the unused lambda here and below when the external
-      # paths support DecoratorSpecs.
-      initial_mask = mask_lib.build_mask(
-          config.mask_configs, subvol.bbox, lambda x: x
-      )
+    with beam_utils.timer_counter(self.namespace, 'build-mask'):
+      if self._config.mask_config is not None:
+        mask = self._build_mask(self._config.mask_config, box)
 
-    if config.selection_mask_configs is not None:
-      cropped_bbox = self.crop_box(subvol.bbox)
-      sel_start = [
-          cropped_bbox.start[0] / config.stride,
-          cropped_bbox.start[1] / config.stride,
-          subvol.bbox.start[2],
-      ]
-      xy = np.array([1, 1, 0])
-      scale = np.array([config.stride, config.stride, 1])
-      sel_size = (
-          subvol.bbox.size - xy * config.patch_size + xy * config.stride
-      ) / scale
-      sel_box = bounding_box.BoundingBox(sel_start, sel_size)
-      sel_mask = mask_lib.build_mask(
-          config.selection_mask_configs, sel_box, lambda x: x
-      )
+      if self._config.selection_mask_config is not None:
+        sel_box = box.scale(
+            [1.0 / self._config.stride, 1.0 / self._config.stride, 1]
+        )
+        sel_mask = self._build_mask(self._config.selection_mask_config, sel_box)
 
     def _estimate_flow(z_prev, z_curr):
       mask_prev = mask_curr = None
       prev = image[z_prev, ...]
       curr = image[z_curr, ...]
 
-      if initial_mask is not None:
-        mask_prev = initial_mask[z_prev, ...]
-        mask_curr = initial_mask[z_curr, ...]
+      if mask is not None:
+        mask_prev = mask[z_prev, ...]
+        mask_curr = mask[z_curr, ...]
 
       smask = None
       if sel_mask is not None:
@@ -189,55 +197,52 @@ class EstimateFlow(subvolume_processor.SubvolumeProcessor):
       return mfc.flow_field(
           prev,
           curr,
-          config.patch_size,
-          config.stride,
+          self._config.patch_size,
+          self._config.stride,
           mask_prev,
           mask_curr,
-          mask_only_for_patch_selection=config.mask_only_for_patch_selection,
+          mask_only_for_patch_selection=self._config.mask_only_for_patch_selection,
           selection_mask=smask,
-          batch_size=config.batch_size,
+          batch_size=self._config.batch_size,
       )
 
-    mfc = flow_field.JAXMaskedXCorrWithStatsCalculator()
-    flows = []
+    with beam_utils.timer_counter(self.namespace, 'flow'):
+      mfc = flow_field.JAXMaskedXCorrWithStatsCalculator()
+      flows = []
 
-    if config.fixed_current:
-      if config.z_stride > 0:
-        rng = range(0, image.shape[0] - 1)
-        z_curr = image.shape[0] - 1
+      if self._config.fixed_current:
+        if self._config.z_stride > 0:
+          rng = range(0, image.shape[0] - 1)
+          z_curr = image.shape[0] - 1
+        else:
+          rng = range(1, image.shape[0])
+          z_curr = 0
+        for z_prev in rng:
+          flows.append(_estimate_flow(z_prev, z_curr))
       else:
-        rng = range(1, image.shape[0])
-        z_curr = 0
-      for z_prev in rng:
-        flows.append(_estimate_flow(z_prev, z_curr))
-    else:
-      if config.z_stride > 0:
-        rng = range(0, image.shape[0] - config.z_stride)
-      else:
-        rng = range(-config.z_stride, image.shape[0])
+        if self._config.z_stride > 0:
+          rng = range(0, image.shape[0] - self._config.z_stride)
+        else:
+          rng = range(-self._config.z_stride, image.shape[0])
 
-      for z in rng:
-        flows.append(_estimate_flow(z, z + config.z_stride))
+        for z in rng:
+          flows.append(_estimate_flow(z, z + self._config.z_stride))
 
     ret = np.array(flows)
 
     # Output starts at:
     #   Δz > 0: box.start.z + Δz
     #   Δz < 0: box.start.z
-    out_box = self.crop_box(subvol.bbox)
+    out_box = self.crop_box(box)
     out_box = bounding_box.BoundingBox(
-        start=out_box.start // [config.stride, config.stride, 1],
+        start=out_box.start // [self._config.stride, self._config.stride, 1],
         size=[ret.shape[-1], ret.shape[-2], out_box.size[2]],
     )
+    if ret.shape[0] != out_box.size[2]:
+      raise ValueError(f'ret:{ret.shape} vs out:{out_box.size}')
 
-    expected_box = self.expected_output_box(subvol.bbox)
-    if out_box != expected_box:
-      raise ValueError(
-          f'Bounding box does not match expected output_box {out_box} vs '
-          f'{expected_box}'
-      )
-
-    return subvolume.Subvolume(np.transpose(ret, (1, 0, 2, 3)), out_box)
+    beam_utils.counter(self.namespace, 'subvolumes-done').inc()
+    return Subvolume(np.transpose(ret, (1, 0, 2, 3)), out_box)
 
   # Because mfc.flow_field does not take into account the standard subvolume
   # processor overlap schemes - the latter knows nothing about the internal
