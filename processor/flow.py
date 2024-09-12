@@ -15,9 +15,13 @@
 """Flow field estimation from SOFIMA."""
 
 import dataclasses
+import time
 from typing import Any, Sequence
+
+from absl import logging
 from connectomics.common import beam_utils
 from connectomics.common import bounding_box
+from connectomics.common import file
 from connectomics.common import utils
 from connectomics.volume import base
 from connectomics.volume import mask as mask_lib
@@ -370,7 +374,7 @@ class ReconcileAndFilterFlows(subvolume_processor.SubvolumeProcessor):
       if isinstance(config.mask_configs, str):
         config.mask_configs = self._get_mask_configs(config.mask_configs)
 
-  def _open_volume(self, path: str) -> base.Volume:
+  def _open_volume(self, path: file.PathLike) -> base.Volume:
     """Returns a CZYX-shaped ndarray-like object."""
     raise NotImplementedError(
         'This function needs to be defined in a subclass.'
@@ -508,3 +512,324 @@ class ReconcileAndFilterFlows(subvolume_processor.SubvolumeProcessor):
         self._config.min_patch_size,
     )
     return self.crop_box_and_data(box, ret)
+
+
+class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
+  """Estimates a multi-section flow field.
+
+  Takes an existing single-section (2-channel) flow volume as input,
+  and tries to compute flow vectors which are invalid in the input (NaNs).
+  """
+
+  @dataclasses_json.dataclass_json
+  @dataclasses.dataclass(frozen=True)
+  class EstimateMissingFlowConfig:
+    """Configuration for EstimateMissingFlow.
+
+    Attributes:
+      patch_size: Patch size in pixels, divisible by 'stride'
+      stride: XY stride size in pixels
+      delta_z: Z stride size in pixels (Δz) for the input volume
+      max_delta_z: Maximum Z stride with which try to estimate missing flow
+        vectors
+      max_attempts: Maximum number of attempts to estimate a flow vector for an
+        unmasked location
+      mask_configs: MaskConfigs proto in text format specifying a mask to
+        exclude some voxels from the flow calculation
+      mask_only_for_patch_selection: Whether to only use mask to decide for
+        which patch pairs to compute flow
+      selection_mask_configs: MaskConfigs in text format specifying a mask the
+        positive entries of which indicate locations for which flow should be
+        computed; this mask should have the same resolution and geometry as the
+        output flow volume
+      min_peak_ratio: Quality threshold for acceptance of newly estimated flow
+        vectors; see flow_utils.clean_flow
+      min_peak_sharpness: Quality threshold for acceptance of newly estimated
+        flow vectors; see flow_utils.clean_flow
+      max_magnitude: Maximum magnitude of a flow vector; see
+        flow_utils.clean_flow
+      batch_size: Max number of patches to process in parallel
+      image_volinfo: Path to the VolumeInfo descriptor of the image volume
+      image_cache_bytes: Number of bytes to use for the in-memory image cache;
+        this should ideally be large enough so that no chunks are loaded more
+        than once when processing a subvolume
+      mask_cache_bytes: Number of bytes to use for the in-memory mask cache
+      search_radius: Additional radius to extend patch_size by in every
+        direction when extracting data for the 'previous' section
+    """
+
+    patch_size: int
+    stride: int
+    delta_z: int
+    max_delta_z: int
+    max_attempts: int = 2
+    mask_configs: str | mask_lib.MaskConfigs | None = None
+    mask_only_for_patch_selection: bool = True
+    selection_mask_configs: str | mask_lib.MaskConfigs | None = None
+    min_peak_ratio: float = 1.6
+    min_peak_sharpness: float = 1.6
+    max_magnitude: int = 40
+    batch_size: int = 1024
+    image_volinfo: str | None = None
+    image_cache_bytes: int = int(1e9)
+    mask_cache_bytes: int = int(1e9)
+    search_radius: int = 0
+
+  _config: EstimateMissingFlowConfig
+
+  def __init__(
+      self,
+      config: EstimateMissingFlowConfig,
+      input_volinfo_or_ts_spec=None,
+  ):
+    """Constructor.
+
+    Args:
+      config: Parameters for EstimateMissingFlow
+      input_volinfo_or_ts_spec: unused
+    """
+    del input_volinfo_or_ts_spec
+
+    self._config = config
+
+    if config.patch_size % config.stride != 0:
+      raise ValueError(
+          f'patch_size {config.patch_size} not a multiple of stride'
+          f' {config.stride}'
+      )
+
+    self._search_patch_size = config.patch_size + config.search_radius * 2
+    if self._search_patch_size % config.stride != 0:
+      raise ValueError(
+          f'search_patch_size {self._search_patch_size} not a multiple of'
+          f' stride {config.stride}'
+      )
+
+    if config.mask_configs is not None:
+      config.mask_configs = self._get_mask_configs(config.mask_configs)
+
+    if config.selection_mask_configs is not None:
+      config.selection_mask_configs = self._get_mask_configs(
+          config.selection_mask_configs
+      )
+
+  def _get_mask_configs(self, mask_configs: str) -> mask_lib.MaskConfigs:
+    raise NotImplementedError(
+        'This function needs to be defined in a subclass.'
+    )
+
+  def _open_volume(self, path: file.PathLike) -> base.Volume:
+    raise NotImplementedError(
+        'This function needs to be defined in a subclass.'
+    )
+
+  def _build_mask(
+      self,
+      mask_configs: mask_lib.MaskConfigs,
+      # TODO(blakely): Switch to BoundingBox after move to 3p.
+      box: bounding_box.BoundingBoxBase,
+  ) -> Any:
+    """Returns a CZYX-shaped ndarray-like object."""
+    raise NotImplementedError(
+        'This function needs to be defined in a subclass.'
+    )
+
+  def num_channels(self, input_channels):
+    """Returns the number of channels in the output volume.
+
+    Args:
+      input_channels: The number of channels in the input volume.
+
+    Returned channels are `flow_x, flow_y, lookback_z`. The latter represents
+    how far back in the stack the processor had to look to find a valid flow
+    calculation.
+    """
+    del input_channels
+    return 3
+
+  def process(self, subvol: Subvolume) -> SubvolumeOrMany:
+    box = subvol.bbox
+    input_ndarray = subvol.data
+    namespace = 'estimate-missing-flow'
+    beam_utils.counter(namespace, 'subvolumes-started').inc()
+
+    image_volume = self._open_volume(self._config.image_volinfo)
+
+    # Bounding box identifying the region of the image for which the input
+    # flow was computed.
+    stride = self._config.stride
+    full_image_box = bounding_box.BoundingBox(
+        start=(
+            box.start[0] * stride - self._search_patch_size // 2,
+            box.start[1] * stride - self._search_patch_size // 2,
+            box.start[2],
+        ),
+        size=(
+            (box.size[0] - 1) * stride + self._search_patch_size,
+            (box.size[1] - 1) * stride + self._search_patch_size,
+            1,
+        ),
+    )
+    prev_image_box = image_volume.clip_box_to_volume(full_image_box)
+    assert prev_image_box is not None
+
+    # Nothing to do if we don't have sufficient image context for any
+    # flow field entries.
+    if np.any(prev_image_box.size[:2] <= self._search_patch_size):
+      return subvol
+
+    # Do not process flow field entries for which we do not have sufficient
+    # image context.
+    offset = prev_image_box.translate(-full_image_box.start).start // stride
+    out_box = box.adjusted_by(start=offset)
+    input_ndarray = input_ndarray[:, :, offset[1] :, offset[0] :]
+
+    # ceil_div
+    offset = -((prev_image_box.end - full_image_box.end) // stride)
+    out_box = out_box.adjusted_by(end=-offset)
+    input_ndarray = input_ndarray[:, :, : out_box.size[1], : out_box.size[0]]
+
+    patch_size = self._config.patch_size
+    curr_image_box = bounding_box.BoundingBox(
+        start=(
+            out_box.start[0] * stride - patch_size // 2,
+            out_box.start[1] * stride - patch_size // 2,
+            out_box.start[2],
+        ),
+        size=(
+            (out_box.size[0] - 1) * stride + patch_size,
+            (out_box.size[1] - 1) * stride + patch_size,
+            1,
+        ),
+    )
+    curr_image_box = image_volume.clip_box_to_volume(curr_image_box)
+    assert curr_image_box is not None
+
+    # The input flow forms the initial state of the output. We will try
+    # to fill-in any invalid (NaN) pixels by computing flow against
+    # earlier sections.
+    ret = np.zeros([3] + list(out_box.size[::-1]))
+    ret[:2, ...] = input_ndarray
+    ret[2, ...] = self._config.delta_z
+
+    sel_mask = None
+    if self._config.selection_mask_config is not None:
+      sel_mask = self._build_mask(self._config.selection_mask_config, out_box)
+
+    mfc = flow_field.JAXMaskedXCorrWithStatsCalculator()
+    invalid = np.isnan(input_ndarray[0, ...])
+    for z in range(0, invalid.shape[0]):
+      z0 = box.start[2] + z
+      logging.info('Processing rel_z=%d abs_z=%d', z, z0)
+
+      if np.all(~invalid[z, ...]):
+        beam_utils.counter(namespace, 'sections-already-valid').inc()
+        continue
+
+      image_box = curr_image_box.translate([0, 0, z])
+      curr_mask = None
+      if self._config.mask_config is not None:
+        curr_mask = self._build_mask(
+            self._config.mask_config, image_box
+        ).squeeze()
+        if np.all(curr_mask):
+          beam_utils.counter(namespace, 'sections-masked').inc()
+          continue
+
+        logging.info('Mask built.')
+
+      attempts = np.zeros(ret.shape[2:], dtype=int)
+      mask = ~np.isfinite(ret[0, z, ...])
+      if sel_mask is not None:
+        mask &= sel_mask[z, ...]
+
+      curr = image_volume.asarray[image_box.to_slice4d()].squeeze()
+
+      delta_z = self._config.delta_z
+      if delta_z > 0:
+        rng = range(delta_z + 1, self._config.max_delta_z + 1)
+      else:
+        rng = range(delta_z - 1, self._config.max_delta_z - 1, -1)
+
+      for delta_z in rng:
+        if (
+            box.start[2] - delta_z < 0
+            or box.end[2] - delta_z >= image_volume.volume_size[2]
+        ):
+          break
+
+        t_start = time.time()
+        prev_box = prev_image_box.translate([0, 0, z - delta_z])
+        logging.info('Trying delta_z=%d (%r)', delta_z, prev_box)
+        prev = image_volume.asarray[prev_box.to_slice4d()].squeeze()
+        logging.info('.. image loaded.')
+        t1 = time.time()
+
+        if self._config.mask_config is not None:
+          prev_mask = self._build_mask(
+              self._config.mask_config, prev_box
+          ).squeeze()
+          if np.all(prev_mask):
+            continue
+        else:
+          prev_mask = None
+        logging.info('.. mask loaded.')
+
+        # Limit the number of estimation attempts per voxel. Attempts
+        # are only counted when voxels in both sections are unmasked.
+        mask &= attempts <= self._config.max_attempts
+        if not np.any(mask):
+          break
+
+        logging.info('.. points to evaluate: %d', np.sum(mask))
+        t2 = time.time()
+
+        flow = mfc.flow_field(
+            prev,
+            curr,
+            self._search_patch_size,
+            self._config.stride,
+            prev_mask,
+            curr_mask,
+            mask_only_for_patch_selection=self._config.mask_only_for_patch_selection,
+            selection_mask=mask,
+            batch_size=self._config.batch_size,
+            post_patch_size=self._config.patch_size,
+        )
+
+        t3 = time.time()
+        valid = np.isfinite(flow[0, ...])
+        attempts[: valid.shape[0], : valid.shape[1]][valid] += 1
+
+        flow = flow_utils.clean_flow(
+            flow[:, np.newaxis, ...],  #
+            self._config.min_peak_ratio,
+            self._config.min_peak_sharpness,
+            self._config.max_magnitude,
+            max_deviation=0.0,
+        )
+
+        t4 = time.time()
+        sy, sx = flow.shape[2:]
+        to_update = mask[:sy, :sx] & np.isfinite(flow[0, 0, ...])
+        mask[:sy, :sx][to_update] = False
+        logging.info('.. points to update: %d', np.sum(to_update))
+
+        beam_utils.counter(namespace, f'sections-filled-delta{delta_z}').inc(
+            np.sum(to_update)
+        )
+        ret[2, z, :sy, :sx][to_update] = delta_z
+        ret[0, z, :sy, :sx][to_update] = flow[0, 0, ...][to_update]
+        ret[1, z, :sy, :sx][to_update] = flow[1, 0, ...][to_update]
+        t5 = time.time()
+
+        logging.info(
+            'timings: img:%.2f  mask:%.2f  flow:%.2f  clean:%.2f  update:%.2f',
+            t1 - t_start,
+            t2 - t1,
+            t3 - t2,
+            t4 - t3,
+            t5 - t4,
+        )
+
+    return Subvolume(ret, out_box)
