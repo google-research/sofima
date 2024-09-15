@@ -323,11 +323,13 @@ class InvertMap(subvolume_processor.SubvolumeProcessor):
   crop_at_borders = False
   output_num = subvolume_processor.OutputNums.MULTI
 
-  def __init__(self, stride: float, crop_output=True, input_volinfo=None):
+  def __init__(
+      self, stride: map_utils.StrideZYX, crop_output=True, input_volinfo=None
+  ):
     """Constructor.
 
     Args:
-      stride: XY stride of the coordinate map
+      stride: [Z]YX stride of the coordinate map
       crop_output: if False, outputs data for the input box instead of the inner
         box of the map; a typical use case is when inverting data for a complete
         section in which case there are no other work items that could provide

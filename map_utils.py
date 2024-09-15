@@ -53,7 +53,7 @@ TODO(mjanusz): Clean up stride format.
 """
 
 import collections
-from typing import Optional, Sequence, Union
+from typing import Sequence
 from connectomics.common import bounding_box
 import jax
 import jax.numpy as jnp
@@ -63,8 +63,8 @@ from scipy import ndimage
 from scipy import spatial
 
 
-StrideZYX = Union[float, Sequence[float]]
-ShapeZYX = Union[tuple[int, int], tuple[int, int, int]]
+StrideZYX = float | Sequence[float]
+ShapeZYX = tuple[int, int] | tuple[int, int, int]
 
 
 def _interpolate_points(
@@ -150,7 +150,7 @@ def _identity_map_absolute(
 def to_absolute(
     coord_map: np.ndarray,
     stride: StrideZYX,
-    box: Optional[bounding_box.BoundingBox] = None,
+    box: bounding_box.BoundingBox | None = None,
 ) -> np.ndarray:
   """Converts a coordinate map from relative to absolute representation.
 
@@ -190,7 +190,7 @@ def to_absolute(
 def to_relative(
     coord_map: np.ndarray,
     stride: StrideZYX,
-    box: Optional[bounding_box.BoundingBox] = None,
+    box: bounding_box.BoundingBox | None = None,
 ) -> np.ndarray:
   """Converts a coordinate map from absolute to relative representation.
 
@@ -308,7 +308,7 @@ def outer_box(
     coord_map: np.ndarray,
     box: bounding_box.BoundingBox,
     stride: StrideZYX,
-    target_len: Optional[StrideZYX] = None,
+    target_len: StrideZYX | None = None,
 ) -> bounding_box.BoundingBox:
   """Returns a bounding box covering all target nodes.
 
@@ -343,7 +343,7 @@ def outer_box(
 
 
 def inner_box(
-    coord_map: np.ndarray, box: bounding_box.BoundingBox, stride: float
+    coord_map: np.ndarray, box: bounding_box.BoundingBox, stride: StrideZYX
 ) -> bounding_box.BoundingBox:
   """Returns a box within which all nodes are mapped to by coord map.
 
@@ -356,7 +356,9 @@ def inner_box(
     bounding box, all (u, v[, w]) points contained within which have
     an entry in the (x, y[, z]) -> (u, v[, w]) map
   """
-  assert coord_map.shape[0] in (2, 3)
+  dim = coord_map.shape[0]
+  assert dim in (2, 3)
+  stride = _as_vec(stride, dim)
 
   # Part of the map might be invalid, in which case we extrapolate
   # in order to get a fully valid array.
@@ -366,12 +368,12 @@ def inner_box(
   y0 = np.max(np.min(int_map[1, ...], axis=-2))
   y1 = np.min(np.max(int_map[1, ...], axis=-2))
 
-  x0 = int(-(-x0 // stride))
-  y0 = int(-(-y0 // stride))
-  x1 = x1 // stride
-  y1 = y1 // stride
+  x0 = int(-(-x0 // stride[-1]))
+  y0 = int(-(-y0 // stride[-2]))
+  x1 = x1 // stride[-1]
+  y1 = y1 // stride[-2]
 
-  if coord_map.shape[0] == 2:
+  if dim == 2:
     return bounding_box.BoundingBox(
         start=(x0, y0, box.start[2]),
         size=(x1 - x0 + 1, y1 - y0 + 1, box.size[2]),
@@ -379,8 +381,8 @@ def inner_box(
 
   z0 = np.max(np.min(int_map[2, ...], axis=-3))
   z1 = np.min(np.max(int_map[2, ...], axis=-3))
-  z0 = int(-(-z0 // stride))
-  z1 = z1 // stride
+  z0 = int(-(-z0 // stride[0]))
+  z1 = z1 // stride[0]
 
   return bounding_box.BoundingBox(
       start=(x0, y0, z0), size=(x1 - x0 + 1, y1 - y0 + 1, z1 - z0 + 1)
@@ -736,7 +738,7 @@ def mask_irregular(
     coord_map: np.ndarray,
     stride: float,
     frac: float,
-    max_frac: Optional[float] = None,
+    max_frac: float | None = None,
     dilation_iters: int = 1,
 ) -> np.ndarray:
   """Masks stretched/folded parts of the map.
