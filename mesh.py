@@ -28,12 +28,10 @@ position of (i * Δ + Δx, j * Δ + Δy).
 import collections
 import dataclasses
 import functools
-from typing import Optional, Sequence, Union
+from typing import Sequence
 
 from absl import logging
-
 import dataclasses_json
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -41,10 +39,9 @@ import numpy as np
 
 # NOTE: This is likely a good candidate for acceleration with a custom CUDA
 # kernel on GPUs.
-def inplane_force(x: jnp.ndarray,
-                  k: float,
-                  stride: float,
-                  prefer_orig_order=False) -> jnp.ndarray:
+def inplane_force(
+    x: jnp.ndarray, k: float, stride: float, prefer_orig_order: bool = False
+) -> jnp.ndarray:
   """Computes in-plane forces on the nodes of a spring mesh.
 
   Args:
@@ -57,8 +54,8 @@ def inplane_force(x: jnp.ndarray,
   Returns:
     [2, z, y, x] array of forces
   """
-  l0 = stride
-  l0_diag = jnp.sqrt(2.0) * l0
+  l0 = np.array(stride)
+  l0_diag = np.sqrt(2.0) * l0
 
   def _xy_vec(x, y):
     return jnp.array([x, y]).reshape([2, 1, 1, 1])
@@ -105,12 +102,14 @@ def inplane_force(x: jnp.ndarray,
   dx = x[..., 1:] - x[..., :-1] + _xy_vec(l0, 0)
   l = jnp.linalg.norm(dx, axis=0)
   if prefer_orig_order:
-    f1 = -k * (
-        1. -
-        l0 * jnp.array([jnp.sign(dx[0]), jnp.ones_like(dx[1])]) / l) * dx
+    f1 = (
+        -k
+        * (1.0 - l0 * jnp.array([jnp.sign(dx[0]), jnp.ones_like(dx[1])]) / l)
+        * dx
+    )
   else:
-    f1 = -k * (1. - l0 / l) * dx
-  f1 = jnp.nan_to_num(f1, copy=False, posinf=0., neginf=0.)
+    f1 = -k * (1.0 - l0 / l) * dx
+  f1 = jnp.nan_to_num(f1, copy=False, posinf=0.0, neginf=0.0)
   f1p = jnp.pad(f1, ((0, 0), (0, 0), (0, 0), (1, 0)))
   f1n = jnp.pad(f1, ((0, 0), (0, 0), (0, 0), (0, 1)))
 
@@ -118,11 +117,14 @@ def inplane_force(x: jnp.ndarray,
   dx = x[..., 1:, :] - x[..., :-1, :] + _xy_vec(0, l0)
   l = jnp.linalg.norm(dx, axis=0)
   if prefer_orig_order:
-    f2 = -k * (1. - l0 * jnp.array([jnp.ones_like(dx[0]),
-                                    jnp.sign(dx[1])]) / l) * dx
+    f2 = (
+        -k
+        * (1.0 - l0 * jnp.array([jnp.ones_like(dx[0]), jnp.sign(dx[1])]) / l)
+        * dx
+    )
   else:
-    f2 = -k * (1. - l0 / l) * dx
-  f2 = jnp.nan_to_num(f2, copy=False, posinf=0., neginf=0.)
+    f2 = -k * (1.0 - l0 / l) * dx
+  f2 = jnp.nan_to_num(f2, copy=False, posinf=0.0, neginf=0.0)
   f2p = jnp.pad(f2, ((0, 0), (0, 0), (1, 0), (0, 0)))
   f2n = jnp.pad(f2, ((0, 0), (0, 0), (0, 1), (0, 0)))
 
@@ -133,11 +135,14 @@ def inplane_force(x: jnp.ndarray,
   dx = x[:, :, 1:, 1:] - x[:, :, :-1, :-1] + _xy_vec(l0, l0)
   l = jnp.linalg.norm(dx, axis=0)
   if prefer_orig_order:
-    f3 = -k2 * (1. - l0_diag *
-                jnp.array([jnp.sign(dx[0]), jnp.sign(dx[1])]) / l) * dx
+    f3 = (
+        -k2
+        * (1.0 - l0_diag * jnp.array([jnp.sign(dx[0]), jnp.sign(dx[1])]) / l)
+        * dx
+    )
   else:
-    f3 = -k2 * (1. - l0_diag / l) * dx
-  f3 = jnp.nan_to_num(f3, copy=False, posinf=0., neginf=0.)
+    f3 = -k2 * (1.0 - l0_diag / l) * dx
+  f3 = jnp.nan_to_num(f3, copy=False, posinf=0.0, neginf=0.0)
   f3p = jnp.pad(f3, ((0, 0), (0, 0), (1, 0), (1, 0)))
   f3n = jnp.pad(f3, ((0, 0), (0, 0), (0, 1), (0, 1)))
 
@@ -145,11 +150,14 @@ def inplane_force(x: jnp.ndarray,
   dx = x[:, :, 1:, :-1] - x[:, :, :-1, 1:] + _xy_vec(-l0, l0)
   l = jnp.linalg.norm(dx, axis=0)
   if prefer_orig_order:
-    f4 = -k2 * (1. - l0_diag *
-                jnp.array([-jnp.sign(dx[0]), jnp.sign(dx[1])]) / l) * dx
+    f4 = (
+        -k2
+        * (1.0 - l0_diag * jnp.array([-jnp.sign(dx[0]), jnp.sign(dx[1])]) / l)
+        * dx
+    )
   else:
-    f4 = -k2 * (1. - l0_diag / l) * dx
-  f4 = jnp.nan_to_num(f4, copy=False, posinf=0., neginf=0.)
+    f4 = -k2 * (1.0 - l0_diag / l) * dx
+  f4 = jnp.nan_to_num(f4, copy=False, posinf=0.0, neginf=0.0)
   f4p = jnp.pad(f4, ((0, 0), (0, 0), (1, 0), (0, 1)))
   f4n = jnp.pad(f4, ((0, 0), (0, 0), (0, 1), (1, 0)))
 
@@ -172,14 +180,17 @@ MESH_LINK_DIRECTIONS = (  # xyz
     (1, 1, 1),
     (1, 1, -1),
     (1, -1, 1),
-    (-1, 1, 1))
+    (-1, 1, 1),
+)
 
 
-def elastic_mesh_3d(x: jnp.ndarray,
-                    k: float,
-                    stride: Union[float, Sequence[float]],
-                    prefer_orig_order=False,
-                    links=MESH_LINK_DIRECTIONS) -> jnp.ndarray:
+def elastic_mesh_3d(
+    x: jnp.ndarray,
+    k: float,
+    stride: float | Sequence[float],
+    prefer_orig_order: bool = False,
+    links=MESH_LINK_DIRECTIONS,
+) -> jnp.ndarray:
   """Computes internal forces on the nodes of a 3d spring mesh.
 
   Args:
@@ -188,7 +199,8 @@ def elastic_mesh_3d(x: jnp.ndarray,
       according to `stride` for all other springs to maintain constant
       elasticity
     stride: XYZ stride of the spring mesh grid
-    prefer_orig_order: only False is supported
+    prefer_orig_order: whether to change the force formulation so that the
+      original relative spatial ordering of the nodes is energetically preferred
     links: sequence of XYZ tuples indcating node links to consider, relative to
       the node at (0, 0, 0); valid component values are {-1, 0, 1}
 
@@ -196,8 +208,6 @@ def elastic_mesh_3d(x: jnp.ndarray,
     [3, z, y, x] array of forces
   """
   assert x.shape[0] == 3
-  if prefer_orig_order:
-    raise NotImplementedError('prefer_orig_order not supported for 3d mesh.')
 
   if not isinstance(stride, collections.abc.Sequence):
     stride = (stride,) * 3
@@ -206,7 +216,6 @@ def elastic_mesh_3d(x: jnp.ndarray,
   f_tot = None
   num_non_spatial = x.ndim - 3
   for direction in links:
-    l0 = np.array(stride * direction).reshape([3] + [1] * (x.ndim - 1))
     # Select everything in non-spatial dimensions.
     sel1 = [np.s_[:]] * num_non_spatial
     sel2 = list(sel1)
@@ -232,11 +241,28 @@ def elastic_mesh_3d(x: jnp.ndarray,
       else:
         raise ValueError('Only |v| <= 1 values supported within links.')
 
+    l0 = np.array(stride * direction, dtype=np.float32).reshape(
+        [3] + [1] * (x.ndim - 1)
+    )
     dx = x[tuple(sel1)] - x[tuple(sel2)] + l0
     l0 = np.linalg.norm(l0)
     l = jnp.linalg.norm(dx, axis=0)
-    f = -k * l0 / stride[0] * (1. - l0 / l) * dx
-    f = jnp.nan_to_num(f, copy=False, posinf=0., neginf=0.)
+
+    # We want to maintain constant elasticity E and E ~ k⋅l0.
+    # k is specified for the horizontal direction, and so l0 for it is
+    # stride_x.
+    k_eff = k * stride[0] / l0
+    if prefer_orig_order:
+      ones = jnp.ones_like(dx[0])
+      factor = jnp.array([
+          direction[0] * jnp.sign(dx[0]) if direction[0] != 0 else ones,
+          direction[1] * jnp.sign(dx[1]) if direction[1] != 0 else ones,
+          direction[2] * jnp.sign(dx[2]) if direction[2] != 0 else ones,
+      ])
+      f = -k_eff * (1.0 - l0 * factor / l) * dx
+    else:
+      f = -k_eff * (1.0 - l0 / l) * dx
+    f = jnp.nan_to_num(f, copy=False, posinf=0.0, neginf=0.0)
     fp = jnp.pad(f, pad_pos)
     if f_tot is None:
       f_tot = fp
@@ -275,7 +301,7 @@ class IntegrationConfig:
   f_dec: float = 0.5
   alpha: float = 0.1
   n_min: int = 5  # Min. number of steps after which to increase step size.
-  dt_max: float = 10.  # Max time step size, in units of 'dt'.
+  dt_max: float = 10.0  # Max time step size, in units of 'dt'.
 
   # Initial and final values of the inter-section force component magnitude cap.
   # start_cap != final_cap is only supported when using FIRE.
@@ -303,15 +329,17 @@ class IntegrationConfig:
 
 
 @functools.partial(jax.jit, static_argnames=['config', 'mesh_force', 'prev_fn'])
-def velocity_verlet(x: jnp.ndarray,
-                    v: jnp.ndarray,
-                    prev: Optional[jnp.ndarray],
-                    config: IntegrationConfig,
-                    force_cap: float,
-                    fire_dt=None,
-                    fire_alpha=None,
-                    mesh_force=inplane_force,
-                    prev_fn=None):
+def velocity_verlet(
+    x: jnp.ndarray,
+    v: jnp.ndarray,
+    prev: jnp.ndarray | None,
+    config: IntegrationConfig,
+    force_cap: float,
+    fire_dt: float | None = None,
+    fire_alpha: float | None = None,
+    mesh_force=inplane_force,
+    prev_fn=None,
+):
   """Executes a sequence of (damped) velocity Verlet steps.
 
   Optionally uses the FIRE integrator. Disabling or reducing
@@ -373,7 +401,7 @@ def velocity_verlet(x: jnp.ndarray,
     a = _force(x, prev, force_cap)
 
     fact0 = 1.0 / (1.0 + 0.5 * dt * config.gamma)
-    fact1 = (1.0 - 0.5 * dt * config.gamma)
+    fact1 = 1.0 - 0.5 * dt * config.gamma
     v = fact0 * (v * fact1 + 0.5 * dt * (a_prev + a))
     return x, v, a
 
@@ -396,24 +424,32 @@ def velocity_verlet(x: jnp.ndarray,
     dt = jnp.where(
         power >= 0,
         jnp.where(
-            n_pos > config.n_min,  #
+            n_pos > config.n_min,
             jnp.minimum(dt * config.f_inc, config.dt_max * config.dt),
-            dt),
-        dt * config.f_dec)
+            dt,
+        ),
+        dt * config.f_dec,
+    )
     alpha = jnp.where(
         power >= 0,
         jnp.where(n_pos > config.n_min, alpha * config.f_alpha, alpha),
-        config.alpha)
+        config.alpha,
+    )
 
     cap = jnp.minimum(
         jnp.where(
             power >= 0,
-            jnp.where((n_pos > 0) & ((n_pos % config.cap_upscale_every) == 0),
-                      config.cap_scale * cap, cap),  #
-            cap),
-        config.final_cap)
+            jnp.where(
+                (n_pos > 0) & ((n_pos % config.cap_upscale_every) == 0),
+                config.cap_scale * cap,
+                cap,
+            ),
+            cap,
+        ),
+        config.final_cap,
+    )
 
-    v *= (power >= 0)
+    v *= power >= 0
 
     if config.remove_drift:
       # Remove any global drift and recenter the nodes.
@@ -430,21 +466,28 @@ def velocity_verlet(x: jnp.ndarray,
     if fire_dt is None:
       fire_dt = config.dt
 
-    return jax.lax.fori_loop(0, config.num_iters, fire_step,
-                             (x, v, a, fire_dt, fire_alpha, 0, force_cap))
+    return jax.lax.fori_loop(
+        0,
+        config.num_iters,
+        fire_step,
+        (x, v, a, fire_dt, fire_alpha, 0, force_cap),
+    )
   else:
     return jax.lax.fori_loop(
-        0, config.num_iters,
+        0,
+        config.num_iters,
         functools.partial(vv_step, dt=config.dt, force_cap=force_cap),
-        (x, v, a))
+        (x, v, a),
+    )
 
 
 def relax_mesh(
     x: jnp.ndarray,
-    prev: Optional[jnp.ndarray],
+    prev: jnp.ndarray | None,
     config: IntegrationConfig,
     mesh_force=inplane_force,
-    prev_fn=None) -> tuple[jnp.ndarray, list[float], int]:
+    prev_fn=None,
+) -> tuple[jnp.ndarray, list[float], int]:
   """Simulates mesh relaxation.
 
   Args:
@@ -473,10 +516,13 @@ def relax_mesh(
   if config.start_cap != config.final_cap:
     if not config.fire:
       raise NotImplementedError(
-          'Adaptive force capping is only supported with FIRE.')
+          'Adaptive force capping is only supported with FIRE.'
+      )
     if config.cap_scale <= 1:
-      raise ValueError('The scaling factor for the force cap has to be larger '
-                       'than 1 when the initial and final cap are different.')
+      raise ValueError(
+          'The scaling factor for the force cap has to be larger '
+          'than 1 when the initial and final cap are different.'
+      )
 
   if prev is not None and prev_fn is not None:
     raise ValueError('Only one of: "prev" and "prev_fn" can be specified.')
@@ -491,7 +537,8 @@ def relax_mesh(
         fire_alpha=alpha,
         force_cap=cap,
         mesh_force=mesh_force,
-        prev_fn=prev_fn)
+        prev_fn=prev_fn,
+    )
     t += config.num_iters
     x, v = state[:2]
     v_mag = jnp.linalg.norm(v, axis=0)
@@ -501,8 +548,15 @@ def relax_mesh(
     if config.fire:
       dt, alpha, n_pos, cap = state[-4:]
       logging.info(
-          't=%r: dt=%f, alpha=%f, n_pos=%d, cap=%f, v_max=%f, e_kin=%f', t, dt,
-          alpha, n_pos, cap, v_max, e_kin[-1])
+          't=%r: dt=%f, alpha=%f, n_pos=%d, cap=%f, v_max=%f, e_kin=%f',
+          t,
+          dt,
+          alpha,
+          n_pos,
+          cap,
+          v_max,
+          e_kin[-1],
+      )
 
     if v_max < config.stop_v_max:
       if cap >= config.final_cap:

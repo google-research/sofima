@@ -36,7 +36,8 @@ class MeshTest(absltest.TestCase):
         num_iters=100,
         max_iters=10000,
         stop_v_max=0.001,
-        fire=True)
+        fire=True,
+    )
     new_x, _, _ = mesh.relax_mesh(x, np.zeros_like(x), config)
     new_x = np.array(new_x)
 
@@ -56,7 +57,8 @@ class MeshTest(absltest.TestCase):
         num_iters=100,
         max_iters=10000,
         stop_v_max=0.001,
-        fire=False)
+        fire=False,
+    )
     new_x, _, _ = mesh.relax_mesh(x, np.zeros_like(x), config)
     new_x = np.array(new_x)
 
@@ -91,19 +93,19 @@ class MeshTest(absltest.TestCase):
     expected = np.zeros((2, 1, 10, 10))
 
     # Force on the left neighbor of the perturbed node.
-    l = np.sqrt((l0 + dx) **2 + dy**2)
+    l = np.sqrt((l0 + dx) ** 2 + dy**2)
     expected[0, 0, 5, 4] = k * (l - l0) * (l0 + dx) / l
     expected[1, 0, 5, 4] = k * (l - l0) * dy / l
     np.testing.assert_allclose(expected[:, 0, 5, 4], f[:, 0, 5, 4], rtol=1e-6)
 
     # Force on the top neighbor of the perturbed node.
-    l = np.sqrt(dx**2 + (l0 + dy)**2)
+    l = np.sqrt(dx**2 + (l0 + dy) ** 2)
     expected[0, 0, 4, 5] = k * (l - l0) * dx / l
     expected[1, 0, 4, 5] = k * (l - l0) * (l0 + dy) / l
     np.testing.assert_allclose(expected[:, 0, 4, 5], f[:, 0, 4, 5], rtol=1e-6)
 
     # Force on the bottom-right neighbor of the perturbed node.
-    l = np.sqrt((l0 - dx)**2 + (l0 - dy)**2)
+    l = np.sqrt((l0 - dx) ** 2 + (l0 - dy) ** 2)
     l2 = l0 * np.sqrt(2.0)
     k2 = k / np.sqrt(2.0)
     expected[0, 0, 6, 6] = -k2 * (l - l2) * (l0 - dx) / l
@@ -111,11 +113,35 @@ class MeshTest(absltest.TestCase):
     np.testing.assert_allclose(expected[:, 0, 6, 6], f[:, 0, 6, 6], rtol=1e-5)
 
     # Force on the bottom-left neighbor of the perturbed node.
-    l = np.sqrt((l0 + dx)**2 + (l0 - dy)**2)
+    l = np.sqrt((l0 + dx) ** 2 + (l0 - dy) ** 2)
     l2 = l0 * np.sqrt(2.0)
     expected[0, 0, 6, 4] = k2 * (l - l2) * (l0 + dx) / l
     expected[1, 0, 6, 4] = -k2 * (l - l2) * (l0 - dy) / l
     np.testing.assert_allclose(expected[:, 0, 6, 4], f[:, 0, 6, 4], rtol=1e-5)
+
+  def test_2d_3d_consistency(self):
+    planar_directions = (  # xyz
+        (1, 0, 0),
+        (0, 1, 0),
+        (1, 1, 0),
+        (-1, 1, 0),
+    )
+
+    rng = np.random.default_rng(42)
+    x = rng.random((3, 1, 50, 50))
+    x[2, ...] = 0.0  # ensure nodes are planar
+
+    f_2d = mesh.inplane_force(x[:2], 0.01, 40.0, False)
+    f_3d = mesh.elastic_mesh_3d(
+        x, 0.01, (40.0, 40.0, 14.0), False, links=planar_directions
+    )
+    np.testing.assert_allclose(f_2d[:2], f_3d[:2], atol=1e-5)
+
+    f_2d = mesh.inplane_force(x[:2], 0.01, 40.0, True)
+    f_3d = mesh.elastic_mesh_3d(
+        x, 0.01, (40.0, 40.0, 14.0), True, links=planar_directions
+    )
+    np.testing.assert_allclose(f_2d[:2], f_3d[:2], atol=1e-5)
 
 
 if __name__ == '__main__':
