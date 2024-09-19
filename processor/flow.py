@@ -86,8 +86,8 @@ class EstimateFlow(subvolume_processor.SubvolumeProcessor):
       batch_size: Max number of patches to process in parallel.
     """
 
-    patch_size: int
-    stride: int
+    patch_size: int = 160
+    stride: int = 40
     z_stride: int = 1
     fixed_current: bool = False
     mask_configs: str | mask_lib.MaskConfigs | None = None
@@ -558,10 +558,10 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
         direction when extracting data for the 'previous' section
     """
 
-    patch_size: int
-    stride: int
-    delta_z: int
-    max_delta_z: int
+    patch_size: int = 160
+    stride: int = 40
+    delta_z: int = 1
+    max_delta_z: int = 4
     max_attempts: int = 2
     mask_configs: str | mask_lib.MaskConfigs | None = None
     mask_only_for_patch_selection: bool = True
