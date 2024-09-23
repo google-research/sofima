@@ -176,14 +176,16 @@ class EstimateFlow(subvolume_processor.SubvolumeProcessor):
     sel_mask = mask = None
 
     with beam_utils.timer_counter(self.namespace, 'build-mask'):
-      if self._config.mask_config is not None:
+      if self._config.mask_configs is not None:
         mask = self._build_mask(self._config.mask_config, box)
 
-      if self._config.selection_mask_config is not None:
+      if self._config.selection_mask_configs is not None:
         sel_box = box.scale(
             [1.0 / self._config.stride, 1.0 / self._config.stride, 1]
         )
-        sel_mask = self._build_mask(self._config.selection_mask_config, sel_box)
+        sel_mask = self._build_mask(
+            self._config.selection_mask_configs, sel_box
+        )
 
     def _estimate_flow(z_prev, z_curr):
       mask_prev = mask_curr = None
@@ -728,9 +730,9 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
 
       image_box = curr_image_box.translate([0, 0, z])
       curr_mask = None
-      if self._config.mask_config is not None:
+      if self._config.mask_configs is not None:
         curr_mask = self._build_mask(
-            self._config.mask_config, image_box
+            self._config.mask_configs, image_box
         ).squeeze()
         if np.all(curr_mask):
           beam_utils.counter(namespace, 'sections-masked').inc()
@@ -765,9 +767,9 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
         logging.info('.. image loaded.')
         t1 = time.time()
 
-        if self._config.mask_config is not None:
+        if self._config.mask_configs is not None:
           prev_mask = self._build_mask(
-              self._config.mask_config, prev_box
+              self._config.mask_configs, prev_box
           ).squeeze()
           if np.all(prev_mask):
             continue
