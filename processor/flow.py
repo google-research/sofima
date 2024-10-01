@@ -62,7 +62,6 @@ class EstimateFlow(subvolume_processor.SubvolumeProcessor):
   centered at 'x' is stored at 'x' // patch_size.
   """
 
-  @dataclasses_json.dataclass_json
   @dataclasses.dataclass(eq=True)
   class EstimateFlowConfig(utils.NPDataClassJsonMixin):
     """Configuration for EstimateFlow.
@@ -177,7 +176,7 @@ class EstimateFlow(subvolume_processor.SubvolumeProcessor):
 
     with beam_utils.timer_counter(self.namespace, 'build-mask'):
       if self._config.mask_configs is not None:
-        mask = self._build_mask(self._config.mask_config, box)
+        mask = self._build_mask(self._config.mask_configs, box)
 
       if self._config.selection_mask_configs is not None:
         sel_box = box.scale(
@@ -295,7 +294,6 @@ class ReconcileAndFilterFlows(subvolume_processor.SubvolumeProcessor):
 
   crop_at_borders = False
 
-  @dataclasses_json.dataclass_json
   @dataclasses.dataclass(eq=True)
   class ReconcileFlowsConfig(utils.NPDataClassJsonMixin):
     """Configuration for ReconcileAndFilterFlows.
@@ -333,25 +331,30 @@ class ReconcileAndFilterFlows(subvolume_processor.SubvolumeProcessor):
     base_delta_z: int = 0
 
   _config: ReconcileFlowsConfig
+  _metadata: list[metadata.VolumeMetadata] = []
 
   def __init__(
       self,
       config: ReconcileFlowsConfig,
-      input_volinfo_or_metadata: str | metadata.VolumeMetadata | None = None,
+      input_path_or_metadata: (
+          file.PathLike | metadata.VolumeMetadata | None
+      ) = None,
   ):
     """Constructor.
 
     Args:
       config: Parameters for ReconcileAndFilterFlows
-      input_volinfo_or_metadata: input volume with a voxel size equal or smaller
+      input_path_or_metadata: input volume with a voxel size equal or smaller
         than the first volume in the flow_volinfos list
     """
     self._config = config
 
     self._scales = [None]
-    self._metadata: list[metadata.VolumeMetadata] = []
-    if input_volinfo_or_metadata is not None:
-      self._metadata.append(self._get_metadata(input_volinfo_or_metadata))
+    if input_path_or_metadata is not None:
+      meta = input_path_or_metadata
+      if not isinstance(meta, metadata.VolumeMetadata):
+        meta = self._get_metadata(meta)
+      self._metadata.append(meta)
     if isinstance(config.flow_volinfos, str):
       config.flow_volinfos = config.flow_volinfos.split(',')
 
@@ -382,7 +385,7 @@ class ReconcileAndFilterFlows(subvolume_processor.SubvolumeProcessor):
         'This function needs to be defined in a subclass.'
     )
 
-  def _get_metadata(self, path) -> metadata.VolumeMetadata:
+  def _get_metadata(self, path: file.PathLike) -> metadata.VolumeMetadata:
     raise NotImplementedError(
         'This function needs to be defined in a subclass.'
     )
@@ -421,7 +424,7 @@ class ReconcileAndFilterFlows(subvolume_processor.SubvolumeProcessor):
     qy = qy + box.start[1]
 
     flows = []
-    volumes = [self._open_volume(v) for v in self._metadata]
+    volumes = [self._open_volume(v.path) for v in self._metadata]
 
     for i, (vol, mag_scale) in enumerate(zip(volumes, self._scales)):
       if i > 0:
@@ -523,9 +526,8 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
   and tries to compute flow vectors which are invalid in the input (NaNs).
   """
 
-  @dataclasses_json.dataclass_json
   @dataclasses.dataclass(frozen=True)
-  class EstimateMissingFlowConfig:
+  class EstimateMissingFlowConfig(dataclasses_json.DataClassJsonMixin):
     """Configuration for EstimateMissingFlow.
 
     Attributes:
@@ -715,8 +717,8 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
     ret[2, ...] = self._config.delta_z
 
     sel_mask = None
-    if self._config.selection_mask_config is not None:
-      sel_mask = self._build_mask(self._config.selection_mask_config, out_box)
+    if self._config.selection_mask_configs is not None:
+      sel_mask = self._build_mask(self._config.selection_mask_configs, out_box)
 
     mfc = flow_field.JAXMaskedXCorrWithStatsCalculator()
     invalid = np.isnan(input_ndarray[0, ...])
