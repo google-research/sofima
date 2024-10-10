@@ -40,7 +40,10 @@ import numpy as np
 # NOTE: This is likely a good candidate for acceleration with a custom CUDA
 # kernel on GPUs.
 def inplane_force(
-    x: jnp.ndarray, k: float, stride: float, prefer_orig_order: bool = False
+    x: jnp.ndarray,
+    k: float,
+    stride: Sequence[float],
+    prefer_orig_order: bool = False,
 ) -> jnp.ndarray:
   """Computes in-plane forces on the nodes of a spring mesh.
 
@@ -54,8 +57,10 @@ def inplane_force(
   Returns:
     [2, z, y, x] array of forces
   """
+  if len(stride) != 2:
+    raise ValueError('stride must be 2D.')
   l0 = np.array(stride)
-  l0_diag = np.sqrt(2.0) * l0
+  l0_diag = np.linalg.norm(l0)
 
   def _xy_vec(x, y):
     return jnp.array([x, y]).reshape([2, 1, 1, 1])
@@ -99,31 +104,31 @@ def inplane_force(
   # a 50% performance penalty on a P100/V100 GPU.
   #
   # - springs
-  dx = x[..., 1:] - x[..., :-1] + _xy_vec(l0, 0)
+  dx = x[..., 1:] - x[..., :-1] + _xy_vec(l0[0], 0)
   l = jnp.linalg.norm(dx, axis=0)
   if prefer_orig_order:
     f1 = (
         -k
-        * (1.0 - l0 * jnp.array([jnp.sign(dx[0]), jnp.ones_like(dx[1])]) / l)
+        * (1.0 - l0[0] * jnp.array([jnp.sign(dx[0]), jnp.ones_like(dx[1])]) / l)
         * dx
     )
   else:
-    f1 = -k * (1.0 - l0 / l) * dx
+    f1 = -k * (1.0 - l0[0] / l) * dx
   f1 = jnp.nan_to_num(f1, copy=False, posinf=0.0, neginf=0.0)
   f1p = jnp.pad(f1, ((0, 0), (0, 0), (0, 0), (1, 0)))
   f1n = jnp.pad(f1, ((0, 0), (0, 0), (0, 0), (0, 1)))
 
   # | springs
-  dx = x[..., 1:, :] - x[..., :-1, :] + _xy_vec(0, l0)
+  dx = x[..., 1:, :] - x[..., :-1, :] + _xy_vec(0, l0[1])
   l = jnp.linalg.norm(dx, axis=0)
   if prefer_orig_order:
     f2 = (
         -k
-        * (1.0 - l0 * jnp.array([jnp.ones_like(dx[0]), jnp.sign(dx[1])]) / l)
+        * (1.0 - l0[1] * jnp.array([jnp.ones_like(dx[0]), jnp.sign(dx[1])]) / l)
         * dx
     )
   else:
-    f2 = -k * (1.0 - l0 / l) * dx
+    f2 = -k * (1.0 - l0[1] / l) * dx
   f2 = jnp.nan_to_num(f2, copy=False, posinf=0.0, neginf=0.0)
   f2p = jnp.pad(f2, ((0, 0), (0, 0), (1, 0), (0, 0)))
   f2n = jnp.pad(f2, ((0, 0), (0, 0), (0, 1), (0, 0)))
@@ -132,7 +137,7 @@ def inplane_force(
   k2 = k / jnp.sqrt(2.0)
 
   # \ springs
-  dx = x[:, :, 1:, 1:] - x[:, :, :-1, :-1] + _xy_vec(l0, l0)
+  dx = x[:, :, 1:, 1:] - x[:, :, :-1, :-1] + _xy_vec(l0[0], l0[1])
   l = jnp.linalg.norm(dx, axis=0)
   if prefer_orig_order:
     f3 = (
@@ -147,7 +152,7 @@ def inplane_force(
   f3n = jnp.pad(f3, ((0, 0), (0, 0), (0, 1), (0, 1)))
 
   # / springs
-  dx = x[:, :, 1:, :-1] - x[:, :, :-1, 1:] + _xy_vec(-l0, l0)
+  dx = x[:, :, 1:, :-1] - x[:, :, :-1, 1:] + _xy_vec(-l0[0], l0[1])
   l = jnp.linalg.norm(dx, axis=0)
   if prefer_orig_order:
     f4 = (
@@ -274,16 +279,16 @@ def elastic_mesh_3d(
   return f_tot  # pytype: disable=bad-return-type  # jax-ndarray
 
 
-@dataclasses_json.dataclass_json
-@functools.partial(dataclasses.dataclass, frozen=True)
-class IntegrationConfig:
+@dataclasses.dataclass(frozen=True)
+class IntegrationConfig(dataclasses_json.DataClassJsonMixin):
   """Parameters for numerical integration of the mesh state."""
 
   dt: float  # time step size
   gamma: float  # damping constant
   k0: float  # spring constant for inter-section springs
   k: float  # spring constant for intra-section springs
-  stride: float  # distance between nearest neighbors of the point grid
+  # distance between nearest neighbors of the point grid
+  stride: tuple[float, float] | tuple[float, float, float]
   num_iters: int  # number of time steps to execute at once
   max_iters: int  # upper bound for simulation time
 
@@ -326,6 +331,41 @@ class IntegrationConfig:
   # speed from every node, and translates all nodes so that their mean global
   # position is at 0.
   remove_drift: bool = False
+
+  # Required to ensure that stride is a tuple, which is required to be able to
+  # hash the config before passing to JAX.
+  def __post_init__(self):
+    object.__setattr__(self, 'stride', tuple(self.stride))
+
+
+# Workaround for b/357594003
+jax.tree_util.register_dataclass(
+    IntegrationConfig,
+    data_fields=[
+        'alpha',
+        'cap_scale',
+        'cap_upscale_every',
+        'dt_max',
+        'dt',
+        'f_alpha',
+        'f_dec',
+        'f_inc',
+        'final_cap',
+        'fire',
+        'gamma',
+        'k',
+        'k0',
+        'max_iters',
+        'n_min',
+        'num_iters',
+        'prefer_orig_order',
+        'remove_drift',
+        'start_cap',
+        'stop_v_max',
+        'stride',
+    ],
+    meta_fields=[],
+)
 
 
 @functools.partial(jax.jit, static_argnames=['config', 'mesh_force', 'prev_fn'])

@@ -32,7 +32,7 @@ class MeshTest(absltest.TestCase):
         gamma=0.0,
         k0=0.1,
         k=0.1,
-        stride=10,
+        stride=(10, 10),
         num_iters=100,
         max_iters=10000,
         stop_v_max=0.001,
@@ -53,7 +53,7 @@ class MeshTest(absltest.TestCase):
         gamma=0.9 * np.sqrt(4 * 0.1),  # 90% of critical damping
         k0=0.1,
         k=0.1,
-        stride=10,
+        stride=(10, 10),
         num_iters=100,
         max_iters=10000,
         stop_v_max=0.001,
@@ -66,7 +66,7 @@ class MeshTest(absltest.TestCase):
 
   def test_inplane_equilibrium(self):
     x = np.zeros((2, 1, 10, 10))
-    f = np.array(mesh.inplane_force(x, k=1.0, stride=40.0))
+    f = np.array(mesh.inplane_force(x, k=1.0, stride=(40.0, 40.0)))
     np.testing.assert_array_equal(x, f)
 
   def test_3d_equilibrium(self):
@@ -88,7 +88,7 @@ class MeshTest(absltest.TestCase):
 
     k = 0.1
     l0 = 10.0
-    f = np.array(mesh.inplane_force(x, k=k, stride=l0))
+    f = np.array(mesh.inplane_force(x, k=k, stride=(l0, 10)))
 
     expected = np.zeros((2, 1, 10, 10))
 
@@ -131,13 +131,13 @@ class MeshTest(absltest.TestCase):
     x = rng.random((3, 1, 50, 50))
     x[2, ...] = 0.0  # ensure nodes are planar
 
-    f_2d = mesh.inplane_force(x[:2], 0.01, 40.0, False)
+    f_2d = mesh.inplane_force(x[:2], 0.01, (40.0, 40.0), False)
     f_3d = mesh.elastic_mesh_3d(
         x, 0.01, (40.0, 40.0, 14.0), False, links=planar_directions
     )
     np.testing.assert_allclose(f_2d[:2], f_3d[:2], atol=1e-5)
 
-    f_2d = mesh.inplane_force(x[:2], 0.01, 40.0, True)
+    f_2d = mesh.inplane_force(x[:2], 0.01, (40.0, 40.0), True)
     f_3d = mesh.elastic_mesh_3d(
         x, 0.01, (40.0, 40.0, 14.0), True, links=planar_directions
     )

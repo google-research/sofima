@@ -323,7 +323,7 @@ class MapUtilsTest(absltest.TestCase):
   def test_mask_irregular(self):
     coord_map = np.zeros([2, 50, 50])
     coord_map[0, 40, 10] = 10
-    bad = map_utils.mask_irregular(coord_map, 40, 0.25, 1.1)
+    bad = map_utils.mask_irregular(coord_map, (40, 40), 0.25, 1.1)
 
     expected = np.zeros([2, 50, 50])
     expected[:, 39:42, 8:11] = np.nan

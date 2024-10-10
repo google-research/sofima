@@ -736,7 +736,7 @@ def compose_maps_fast(
 
 def mask_irregular(
     coord_map: np.ndarray,
-    stride: float,
+    stride: Sequence[float],
     frac: float,
     max_frac: float | None = None,
     dilation_iters: int = 1,
@@ -760,16 +760,19 @@ def mask_irregular(
   """
   assert len(coord_map.shape) == 3
   assert coord_map.shape[0] == 2
+  stride = np.asarray(stride)
 
   if max_frac is None:
     max_frac = 2 - frac
+
+  stride_x, stride_y = stride
   diff_x = np.diff(coord_map[0, ...], axis=-1)
   diff_y = np.diff(coord_map[1, ...], axis=-2)
-  diff_x = np.pad(diff_x, [[0, 0], [0, 1]], mode='constant') + stride
-  diff_y = np.pad(diff_y, [[0, 1], [0, 0]], mode='constant') + stride
+  diff_x = np.pad(diff_x, [[0, 0], [0, 1]], mode='constant') + stride_x
+  diff_y = np.pad(diff_y, [[0, 1], [0, 0]], mode='constant') + stride_y
 
-  bad = (diff_x < frac * stride) | (diff_y < frac * stride)
-  bad |= (diff_x > max_frac * stride) | (diff_y > max_frac * stride)
+  bad = (diff_x < frac * stride_x) | (diff_y < frac * stride_y)
+  bad |= (diff_x > max_frac * stride_x) | (diff_y > max_frac * stride_y)
 
   if dilation_iters > 0:
     bad = ndimage.morphology.binary_dilation(

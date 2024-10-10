@@ -23,7 +23,6 @@ from connectomics.common import beam_utils
 from connectomics.common import bounding_box
 from connectomics.common import file
 from connectomics.common import utils
-from connectomics.volume import base
 from connectomics.volume import mask as mask_lib
 from connectomics.volume import metadata
 from connectomics.volume import subvolume
@@ -117,11 +116,6 @@ class EstimateFlow(subvolume_processor.SubvolumeProcessor):
         config.selection_mask_configs = self._get_mask_configs(
             config.selection_mask_configs
         )
-
-  def _get_mask_configs(self, mask_configs: str) -> mask_lib.MaskConfigs:
-    raise NotImplementedError(
-        'This function needs to be defined in a subclass.'
-    )
 
   def _build_mask(
       self,
@@ -379,32 +373,6 @@ class ReconcileAndFilterFlows(subvolume_processor.SubvolumeProcessor):
       if isinstance(config.mask_configs, str):
         config.mask_configs = self._get_mask_configs(config.mask_configs)
 
-  def _open_volume(self, path: file.PathLike) -> base.Volume:
-    """Returns a CZYX-shaped ndarray-like object."""
-    raise NotImplementedError(
-        'This function needs to be defined in a subclass.'
-    )
-
-  def _get_metadata(self, path: file.PathLike) -> metadata.VolumeMetadata:
-    raise NotImplementedError(
-        'This function needs to be defined in a subclass.'
-    )
-
-  def _get_mask_configs(self, mask_configs: str) -> mask_lib.MaskConfigs:
-    raise NotImplementedError(
-        'This function needs to be defined in a subclass.'
-    )
-
-  def _build_mask(
-      self,
-      mask_configs: mask_lib.MaskConfigs,
-      box: bounding_box.BoundingBoxBase,
-  ) -> Any:
-    """Returns a CZYX-shaped ndarray-like object."""
-    raise NotImplementedError(
-        'This function needs to be defined in a subclass.'
-    )
-
   def num_channels(self, input_channels=0):
     del input_channels
     return 2 if not self._config.multi_section else 3
@@ -616,16 +584,6 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
       config.selection_mask_configs = self._get_mask_configs(
           config.selection_mask_configs
       )
-
-  def _get_mask_configs(self, mask_configs: str) -> mask_lib.MaskConfigs:
-    raise NotImplementedError(
-        'This function needs to be defined in a subclass.'
-    )
-
-  def _open_volume(self, path: file.PathLike) -> base.Volume:
-    raise NotImplementedError(
-        'This function needs to be defined in a subclass.'
-    )
 
   def _build_mask(
       self,
