@@ -62,7 +62,7 @@ class EstimateFlow(subvolume_processor.SubvolumeProcessor):
   """
 
   @dataclasses.dataclass(eq=True)
-  class EstimateFlowConfig(utils.NPDataClassJsonMixin):
+  class Config(utils.NPDataClassJsonMixin):
     """Configuration for EstimateFlow.
 
     Attributes:
@@ -84,18 +84,18 @@ class EstimateFlow(subvolume_processor.SubvolumeProcessor):
       batch_size: Max number of patches to process in parallel.
     """
 
-    patch_size: int = 160
-    stride: int = 40
-    z_stride: int = 1
-    fixed_current: bool = False
-    mask_configs: str | mask_lib.MaskConfigs | None = None
-    mask_only_for_patch_selection: bool = False
-    selection_mask_configs: mask_lib.MaskConfigs | None = None
-    batch_size: int = 1024
+    patch_size: int
+    stride: int
+    z_stride: int
+    fixed_current: bool
+    mask_configs: str | mask_lib.MaskConfigs | None
+    mask_only_for_patch_selection: bool
+    selection_mask_configs: mask_lib.MaskConfigs | None
+    batch_size: int
 
-  _config: EstimateFlowConfig
+  _config: Config
 
-  def __init__(self, config: EstimateFlowConfig, input_volinfo_or_ts_spec=None):
+  def __init__(self, config: Config, input_volinfo_or_ts_spec=None):
     """Constructor.
 
     Args:
@@ -289,7 +289,7 @@ class ReconcileAndFilterFlows(subvolume_processor.SubvolumeProcessor):
   crop_at_borders = False
 
   @dataclasses.dataclass(eq=True)
-  class ReconcileFlowsConfig(utils.NPDataClassJsonMixin):
+  class Config(utils.NPDataClassJsonMixin):
     """Configuration for ReconcileAndFilterFlows.
 
     Attributes:
@@ -313,23 +313,23 @@ class ReconcileAndFilterFlows(subvolume_processor.SubvolumeProcessor):
         channel to initialize the output flow with
     """
 
-    flow_volinfos: Sequence[str] | str | None = None
-    mask_configs: str | mask_lib.MaskConfigs | None = None
-    min_peak_ratio: float = 1.6
-    min_peak_sharpness: float = 1.6
-    max_magnitude: float = 40
-    max_deviation: float = 10
-    max_gradient: float = 40
-    min_patch_size: int = 400
-    multi_section: bool = False
-    base_delta_z: int = 0
+    flow_volinfos: Sequence[str] | str | None
+    mask_configs: str | mask_lib.MaskConfigs | None
+    min_peak_ratio: float
+    min_peak_sharpness: float
+    max_magnitude: float
+    max_deviation: float
+    max_gradient: float
+    min_patch_size: int
+    multi_section: bool
+    base_delta_z: int
 
-  _config: ReconcileFlowsConfig
+  _config: Config
   _metadata: list[metadata.VolumeMetadata] = []
 
   def __init__(
       self,
-      config: ReconcileFlowsConfig,
+      config: Config,
       input_path_or_metadata: (
           file.PathLike | metadata.VolumeMetadata | None
       ) = None,
@@ -495,7 +495,7 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
   """
 
   @dataclasses.dataclass(frozen=True)
-  class EstimateMissingFlowConfig(dataclasses_json.DataClassJsonMixin):
+  class Config(dataclasses_json.DataClassJsonMixin):
     """Configuration for EstimateMissingFlow.
 
     Attributes:
@@ -530,28 +530,28 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
         direction when extracting data for the 'previous' section
     """
 
-    patch_size: int = 160
-    stride: int = 40
-    delta_z: int = 1
-    max_delta_z: int = 4
-    max_attempts: int = 2
-    mask_configs: str | mask_lib.MaskConfigs | None = None
-    mask_only_for_patch_selection: bool = True
-    selection_mask_configs: str | mask_lib.MaskConfigs | None = None
-    min_peak_ratio: float = 1.6
-    min_peak_sharpness: float = 1.6
-    max_magnitude: int = 40
-    batch_size: int = 1024
-    image_volinfo: str | None = None
-    image_cache_bytes: int = int(1e9)
-    mask_cache_bytes: int = int(1e9)
-    search_radius: int = 0
+    patch_size: int
+    stride: int
+    delta_z: int
+    max_delta_z: int
+    max_attempts: int
+    mask_configs: str | mask_lib.MaskConfigs | None
+    mask_only_for_patch_selection: bool
+    selection_mask_configs: str | mask_lib.MaskConfigs | None
+    min_peak_ratio: float
+    min_peak_sharpness: float
+    max_magnitude: int
+    batch_size: int
+    image_volinfo: str | None
+    image_cache_bytes: int
+    mask_cache_bytes: int
+    search_radius: int
 
-  _config: EstimateMissingFlowConfig
+  _config: Config
 
   def __init__(
       self,
-      config: EstimateMissingFlowConfig,
+      config: Config,
       input_volinfo_or_ts_spec=None,
   ):
     """Constructor.
