@@ -15,12 +15,15 @@
 """Processors for coordinate maps."""
 
 import bisect
+import dataclasses
 import functools
-from typing import Any
 
 from connectomics.common import bounding_box
+from connectomics.common import file
+from connectomics.volume import metadata
 from connectomics.volume import subvolume
 from connectomics.volume import subvolume_processor
+import dataclasses_json
 import numpy as np
 from scipy import spatial
 from sofima import map_utils
@@ -49,31 +52,18 @@ class ReconcileCrossBlockMaps(subvolume_processor.SubvolumeProcessor):
   geometry.
   """
 
-  crop_at_borders = False
+  @dataclasses.dataclass(eq=True)
+  class Config(dataclasses_json.DataClassJsonMixin):
+    """Configuration for ReconcileCrossBlockMaps.
 
-  def __init__(
-      self,
-      cross_block_volinfo: str,
-      cross_block_inv_volinfo: str,
-      last_inv_volinfo: str,
-      main_inv_volinfo: str,
-      z_map: dict[int | str, int | str],
-      stride: int,
-      xy_overlap: int = 128,
-      backward: bool = False,
-      input_volinfo=None,
-  ):
-    """Constructor.
-
-    Args:
-      cross_block_volinfo: path to the low-res, cross-block coordinate map
-        volume
-      cross_block_inv_volinfo: the inverse of the map in cross_block_volinfo
-      last_inv_volinfo: path to the inverse of the coordinate map providing the
-        position of the first section of every block as if it was part of the
-        previous block
-      main_inv_volinfo: the inverse of the map used as processor input (only the
-        last section within the volume is used)
+    Attributes:
+      cross_block: path to the low-res, cross-block coordinate map volume
+      cross_block_inv: the inverse of the map in cross_block_path
+      last_inv: path to the inverse of the coordinate map providing the position
+        of the first section of every block as if it was part of the previous
+        block
+      main_inv: the inverse of the map used as processor input (only the last
+        section within the volume is used)
       z_map: dictionary mapping coordinates of the high-res map to the low-res
         map
       stride: pixel distance between nearest neighbors of the coordinate maps,
@@ -82,24 +72,43 @@ class ReconcileCrossBlockMaps(subvolume_processor.SubvolumeProcessor):
         of pixels of main input volume
       backward: whether the mesh was solved in backward mode (proceeding from
         higher z coordinates towards lower ones)
+    """
+
+    cross_block: metadata.DecoratedVolume | str
+    cross_block_inv: metadata.DecoratedVolume | str
+    last_inv: metadata.DecoratedVolume | str
+    main_inv: metadata.DecoratedVolume | str
+    z_map: dict[str, int]
+    stride: int
+    xy_overlap: int = 128
+    backward: bool = False
+
+  _config: Config
+
+  crop_at_borders = False
+
+  def __init__(
+      self,
+      config: Config,
+      input_volinfo=None,
+  ):
+    """Constructor.
+
+    Args:
+      config: parameters for ReconcileCrossBlockMaps
       input_volinfo: path to the high-res input volume (unused)
     """
     del input_volinfo
-    self._main_inv_volinfo = main_inv_volinfo
-    self._xblock_volinfo = cross_block_volinfo
-    self._xblock_inv_volinfo = cross_block_inv_volinfo
-    self._last_inv_volinfo = last_inv_volinfo
-    self._xy_overlap = xy_overlap
-    self._z_map = {int(k): int(v) for k, v in z_map.items()}
+    self._config = config
+    self._main_inv_volinfo = config.main_inv
+    self._xblock_volinfo = config.cross_block
+    self._xblock_inv_volinfo = config.cross_block_inv
+    self._last_inv_volinfo = config.last_inv
+    self._xy_overlap = config.xy_overlap
+    self._z_map = {int(k): int(v) for k, v in config.z_map.items()}
     self._sorted_z = list(sorted(self._z_map.keys()))
-    self._stride = stride
-    self._backward = backward
-
-  def _open_volume(self, path: str) -> Any:
-    """Returns a CZYX-shaped ndarray-like object."""
-    raise NotImplementedError(
-        'This function needs to be defined in a subclass.'
-    )
+    self._stride = config.stride
+    self._backward = config.backward
 
   def context(self):
     pre = self._xy_overlap // 2
@@ -320,30 +329,52 @@ class ReconcileCrossBlockMaps(subvolume_processor.SubvolumeProcessor):
 class InvertMap(subvolume_processor.SubvolumeProcessor):
   """Inverts a coordinate map."""
 
-  crop_at_borders = False
-  output_num = subvolume_processor.OutputNums.MULTI
+  @dataclasses.dataclass(eq=True)
+  class Config(dataclasses_json.DataClassJsonMixin):
+    """Configuration for coordinate map inversion.
 
-  def __init__(
-      self, stride: map_utils.StrideZYX, crop_output=True, input_volinfo=None
-  ):
-    """Constructor.
-
-    Args:
+    Attributes:
       stride: [Z]YX stride of the coordinate map
       crop_output: if False, outputs data for the input box instead of the inner
         box of the map; a typical use case is when inverting data for a complete
         section in which case there are no other work items that could provide
         data for areas outside of the inner box
-      input_volinfo: VolumeInfo for the volume with the coordinate map to invert
+      input_volume: path to the volume containing the coordinate map to invert.
     """
-    self._stride = stride
-    self._crop_output = crop_output
+
+    stride: map_utils.StrideZYX
+    crop_output: bool = True
+    # TODO(blakely): Pass this in via the constructor.
+    input_volume: str | None = None
+
+  _config: Config
+  crop_at_borders = False
+  output_num = subvolume_processor.OutputNums.MULTI
+
+  def __init__(
+      self,
+      config: Config,
+      input_path_or_metadata: (
+          file.PathLike | metadata.VolumeMetadata | None
+      ) = None,
+  ):
+
+    source_volume = input_path_or_metadata
+    if source_volume is None:
+      source_volume = config.input_volume
+    if source_volume is None:
+      raise ValueError('No source volume specified.')
+
+    self._config = config
+    meta = self._get_metadata(source_volume)
+
     self._volume_bbox = bounding_box.BoundingBox(
         start=(0, 0, 0),
-        size=(input_volinfo.size.x, input_volinfo.size.y, input_volinfo.size.z),
+        size=(meta.volume_size.x, meta.volume_size.y, meta.volume_size.z),
     )
 
   def process(self, subvol: Subvolume) -> SubvolumeOrMany:
+    config = self._config
     box = subvol.bbox
     input_ndarray = subvol.data
     # If the map is completely invalid, there is nothing to invert.
@@ -352,8 +383,8 @@ class InvertMap(subvolume_processor.SubvolumeProcessor):
 
     rel_map = input_ndarray.astype(np.float64)
 
-    if self._crop_output:
-      dst_box = map_utils.inner_box(rel_map, box, self._stride)
+    if config.crop_output:
+      dst_box = map_utils.inner_box(rel_map, box, config.stride)
       dst_box = dst_box.intersection(self._volume_bbox)
     else:
       dst_box = box
@@ -361,52 +392,53 @@ class InvertMap(subvolume_processor.SubvolumeProcessor):
     if dst_box is None:
       return []
 
-    inv_map = map_utils.invert_map(rel_map, box, dst_box, self._stride)
+    inv_map = map_utils.invert_map(rel_map, box, dst_box, config.stride)
     return [Subvolume(inv_map, dst_box)]
 
 
 class ResampleMap(subvolume_processor.SubvolumeProcessor):
   """Resamples a coordinate map."""
 
+  @dataclasses.dataclass(eq=True)
+  class Config(dataclasses_json.DataClassJsonMixin):
+    """Configuration for map resampling.
+
+    Attributes:
+    """
+
+    stride: int
+    out_stride: int
+    scale: float = 1.0
+    method: str = 'linear'
+
   crop_at_borders = False
   output_num = subvolume_processor.OutputNums.MULTI
 
-  def __init__(
-      self, stride, out_stride, scale=1.0, method='linear', input_volinfo=None
-  ):
-    self._stride = stride
-    self._out_stride = out_stride
-    self._scale = scale
-    self._method = method
+  _config: Config
 
-    ratio = out_stride / stride
-    self._bbox = bounding_box.BoundingBox(
-        start=(0, 0, 0),
-        size=(
-            int(input_volinfo.size.x * ratio),
-            int(input_volinfo.size.y * ratio),
-            input_volinfo.size.z,
-        ),
-    )
+  def __init__(self, config: Config, input_volinfo_or_ts=None):
+    del input_volinfo_or_ts
+    self._config = config
 
   def pixelsize(self, psize):
     psize = psize.copy().astype(np.float32)
-    psize[:2] *= self._out_stride / self._stride
+    psize[:2] *= self._config.out_stride / self._config.stride
     return psize
 
   def process(self, subvol: Subvolume) -> SubvolumeOrMany:
+    config = self._config
     box = subvol.bbox
     input_ndarray = subvol.data
     if np.all(np.isnan(input_ndarray)):
       return []
 
-    rel_map = input_ndarray.astype(np.float64) * self._scale
+    rel_map = input_ndarray.astype(np.float64) * config.scale
     dst_box = self.crop_box(box)
-    ratio = self._stride / self._out_stride
+    ratio = config.stride / config.out_stride
     dst_box = dst_box.scale([ratio, ratio, 1.0])
 
     out_map = map_utils.resample_map(
-        rel_map, box, dst_box, self._stride, self._out_stride, self._method
+        rel_map, box, dst_box, config.stride, config.out_stride, config.method
     )
 
     return [Subvolume(out_map, dst_box)]
@@ -442,6 +474,15 @@ class MaskIrregularities(subvolume_processor.SubvolumeProcessor):
 
 class FillMissing(subvolume_processor.SubvolumeProcessor):
   """Fills missing entries in a coordinate map by inter/extrapolation."""
+
+  @dataclasses.dataclass(eq=True)
+  class Config(dataclasses_json.DataClassJsonMixin):
+    """Configuration for filling in missing entries in a coordinate map.
+
+    Currently empty, but required by the processing framework.
+    """
+
+  _config: Config
 
   crop_at_borders = False
 

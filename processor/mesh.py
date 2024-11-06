@@ -154,7 +154,6 @@ class RelaxMesh(subvolume_processor.SubvolumeProcessor):
     mesh_max_frac: float
     coming_in: list[ComingIn]
     options: MeshOptions | None = dataclasses.field(default_factory=MeshOptions)
-    # TODO(blakely): Add classmethods for defaults for em and liconn
 
   _config: Config
 
