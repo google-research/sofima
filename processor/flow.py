@@ -326,6 +326,7 @@ class ReconcileAndFilterFlows(subvolume_processor.SubvolumeProcessor):
 
   _config: Config
   _metadata: list[metadata.VolumeMetadata] = []
+  _scales: list[float | None] = []
 
   def __init__(
       self,
@@ -343,15 +344,17 @@ class ReconcileAndFilterFlows(subvolume_processor.SubvolumeProcessor):
     """
     self._config = config
 
-    self._scales = [None]
     if input_path_or_metadata is not None:
       meta = input_path_or_metadata
       if not isinstance(meta, metadata.VolumeMetadata):
         meta = self._get_metadata(meta)
+      self._scales.append(None)
       self._metadata.append(meta)
     if isinstance(config.flow_volinfos, str):
       config.flow_volinfos = config.flow_volinfos.split(',')
 
+    if config.flow_volinfos is None:
+      config.flow_volinfos = []
     for path in config.flow_volinfos:
       path, _, scale = path.partition(':')
       if scale:
