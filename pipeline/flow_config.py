@@ -22,6 +22,7 @@ import dataclasses
 from typing import Any
 
 from connectomics.common import utils
+from connectomics.volume import subvolume_processor
 import dataclasses_json
 from sofima.processor import flow
 from sofima.processor.defaults import em_2d
@@ -63,3 +64,10 @@ def default_em_2d(
   if overrides is not None:
     config = utils.update_dataclass(config, overrides)
   return config
+
+
+subvolume_processor.register_default_config(
+    subvolume_processor.DefaultConfigType.EM_2D,
+    FlowPipelineConfig,
+    default_em_2d,
+)
