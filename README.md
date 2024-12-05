@@ -20,7 +20,7 @@ install it directly from the repository, run:
 
 SOFIMA uses optical flow regularized with an elastic mesh to establish
 maps between data in different coordinate systems. Both the [flow estimator](flow_field.py)
-as well as the [mesh solver](mesh.py) are implemented in [JAX](https://github.com/google/jax)
+as well as the [mesh solver](mesh.py) are implemented in [JAX](https://github.com/jax-ml/jax)
 and will automatically take advantage of GPU acceleration if the hardware if available.
 
 A core data structure used throughout the project is a *coordinate map* stored
