@@ -488,7 +488,7 @@ class WarpByMap(subvolume_processor.SubvolumeProcessor):
       )
     map_vol = self._open_volume(map_vol)
     map_box = map_vol.clip_box_to_volume(map_box)
-    if map_box is None or np.all(map_box.size == 0):
+    if map_box is None or np.any(map_box.size == 0):
       logging.debug('Clipped map box is None for box %r', box)
       return None, None
     rel_map = map_vol[map_box.to_slice4d()].astype(np.float64) * self._scale
@@ -502,13 +502,13 @@ class WarpByMap(subvolume_processor.SubvolumeProcessor):
   def _generate_boxes_to_warp(self, data_vol, box: bounding_box.BoundingBox):
     """Generates work items for which to perform warping."""
     map_box, rel_map = self._get_map_for_box(box)
-    if map_box is None:
+    if map_box is None or np.any(map_box.size == 0):
       logging.debug('No map found for %r.', box)
       return
 
     data_box = map_utils.outer_box(rel_map, map_box, self._source_stride, 1)
     data_box = data_vol.clip_box_to_volume(data_box)
-    if data_box is None or np.all(map_box.size == 0):
+    if data_box is None or np.any(data_box.size == 0):
       logging.debug('Data out of bounds for map: %r.', map_box)
       return
 
