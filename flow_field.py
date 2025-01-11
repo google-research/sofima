@@ -144,9 +144,9 @@ def masked_xcorr(
     out[nonzero_indices] = xcorr[nonzero_indices] / denom[nonzero_indices]
 
   if use_jax:
-    out = jnp.clip(out, a_min=-1, a_max=1)
+    out = jnp.clip(out, min=-1, max=1)
   else:
-    np.clip(out, a_min=-1, a_max=1, out=out)
+    np.clip(out, min=-1, max=1, out=out)
 
   px_threshold = 0.3 * xnp.max(overlap_masked_px, keepdims=True)
   if use_jax:
