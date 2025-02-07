@@ -325,8 +325,8 @@ class ReconcileAndFilterFlows(subvolume_processor.SubvolumeProcessor):
     base_delta_z: int
 
   _config: Config
-  _metadata: list[metadata.VolumeMetadata] = []
-  _scales: list[float | None] = []
+  _metadata: list[metadata.VolumeMetadata]
+  _scales: list[float | None]
 
   def __init__(
       self,
@@ -343,6 +343,8 @@ class ReconcileAndFilterFlows(subvolume_processor.SubvolumeProcessor):
         than the first volume in the flow_volinfos list
     """
     self._config = config
+    self._metadata: list[metadata.VolumeMetadata] = []
+    self._scales: list[float | None] = []
 
     if input_path_or_metadata is not None:
       meta = input_path_or_metadata
