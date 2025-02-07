@@ -396,7 +396,7 @@ class WarpByMap(subvolume_processor.SubvolumeProcessor):
     downsample: int = 1
     offset: float = 0.0
     mask_configs: str | mask_lib.MaskConfigs | None = None
-    source_cache_bytes = int(1e9)
+    source_cache_bytes: int = int(1e9)
 
   def __init__(
       self,

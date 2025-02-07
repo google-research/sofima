@@ -22,6 +22,7 @@ from sofima import mesh as mesh_lib
 from sofima.processor import flow
 from sofima.processor import maps
 from sofima.processor import mesh
+from sofima.processor import warp
 
 
 def estimate_flow_config(
@@ -208,6 +209,28 @@ def default_em_2d_reconcile_config(
       stride=40,
       xy_overlap=128,
       backward=False,
+  )
+  if overrides is not None:
+    config = utils.update_dataclass(config, overrides)
+  return config
+
+
+def warp_config(
+    overrides: dict[str, Any] | None = None,
+) -> warp.WarpByMap.Config:
+  """Default warp configuration for EM 2D data."""
+  config = warp.WarpByMap.Config(
+      stride=40,
+      map_volinfo='UNSET',
+      data_volinfo='UNSET',
+      map_decorator_specs=None,
+      data_decorator_specs=None,
+      map_scale=1.0,
+      interpolation='nearest',
+      downsample=1,
+      offset=0.0,
+      mask_configs=None,
+      source_cache_bytes=int(1e9),
   )
   if overrides is not None:
     config = utils.update_dataclass(config, overrides)
