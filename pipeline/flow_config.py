@@ -29,10 +29,20 @@ from sofima.processor.defaults import em_2d
 
 
 @dataclasses.dataclass(frozen=True)
-class FlowPipelineConfig(dataclasses_json.DataClassJsonMixin):
-  """Configuration for end-to-end SOFIMA flow pipelines."""
+class EstimateFlowStage(dataclasses_json.DataClassJsonMixin):
+  config: flow.EstimateFlow.Config
+  processing: subvolume_processor.ProcessingConfig
+  schedule_batch_size: int
+  ignore_existing: bool
+  delete_existing: bool
+  corner_whitelist: set[list[int]]
 
-  estimate_flow: flow.EstimateFlow.Config
+
+@dataclasses.dataclass(frozen=True)
+class FlowPipeline(dataclasses_json.DataClassJsonMixin):
+  """Configuration for end-to-end SOFIMA flow estimation."""
+
+  estimate_flow: EstimateFlowStage
   reconcile_flows: flow.ReconcileAndFilterFlows.Config
   estimate_missing_flow: flow.EstimateMissingFlow.Config
   reconcile_missing_flows: flow.ReconcileAndFilterFlows.Config
@@ -40,7 +50,7 @@ class FlowPipelineConfig(dataclasses_json.DataClassJsonMixin):
 
 def default_em_2d(
     overrides: dict[str, Any] | None = None,
-) -> FlowPipelineConfig:
+) -> FlowPipeline:
   """Default flow pipeline configuration for EM 2D data."""
 
   reconcile_missing_flows = utils.update_dataclass(
@@ -55,8 +65,27 @@ def default_em_2d(
       },
   )
 
-  config = FlowPipelineConfig(
-      estimate_flow=em_2d.estimate_flow_config(),
+  estimate_flow_config = em_2d.estimate_flow_config()
+  if (
+      overrides is not None
+      and 'estimate_flow' in overrides
+      and 'config' in overrides['estimate_flow']
+  ):
+    estimate_flow_config = utils.update_dataclass(
+        estimate_flow_config, overrides['estimate_flow']['config']
+    )
+  config = FlowPipeline(
+      estimate_flow=EstimateFlowStage(
+          config=estimate_flow_config,
+          processing=subvolume_processor.ProcessingConfig(
+              overlap=[160, 160, estimate_flow_config.z_stride],
+              subvolume_size=[3200, 3200, 128],
+          ),
+          schedule_batch_size=16384,
+          corner_whitelist=set(),
+          ignore_existing=False,
+          delete_existing=False,
+      ),
       reconcile_flows=em_2d.reconcile_flows_config(),
       estimate_missing_flow=em_2d.estimate_missing_flow_config(),
       reconcile_missing_flows=reconcile_missing_flows,
@@ -68,6 +97,6 @@ def default_em_2d(
 
 subvolume_processor.register_default_config(
     subvolume_processor.DefaultConfigType.EM_2D,
-    FlowPipelineConfig,
+    FlowPipeline,
     default_em_2d,
 )
