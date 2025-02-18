@@ -262,7 +262,7 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
 
     if StitchAndRender3dTiles._tile_meshes is None:
       data_path = self._tile_mesh_path
-      with file.Open(data_path, 'rb') as f:
+      with file.Path(data_path).open('rb') as f:
         data = np.load(f, allow_pickle=True)
         StitchAndRender3dTiles._tile_idx_to_xy = {
             v: k for k, v in data['key_to_idx'].item().items()
