@@ -92,6 +92,26 @@ def estimate_missing_flow_config(
   return config
 
 
+def reconcile_missing_flows_config(
+    overrides: dict[str, Any] | None = None,
+) -> flow.ReconcileAndFilterFlows.Config:
+  """Default configuration for reconciling missing flow fields in EM 2D data."""
+  config = utils.update_dataclass(
+      reconcile_flows_config(),
+      {
+          'multi_section': True,
+          'max_magnitude': 0,
+          'max_deviation': 10,
+          'max_gradient': 10,
+          'min_patch_size': 400,
+          'base_delta_z': 1,
+      },
+  )
+  if overrides is not None:
+    config = utils.update_dataclass(config, overrides)
+  return config
+
+
 subvolume_processor.register_default_config(
     subvolume_processor.DefaultConfigType.EM_2D,
     flow.EstimateFlow.Config,
