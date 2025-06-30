@@ -14,8 +14,9 @@
 # limitations under the License.
 """Utilities for warping image and point data between coordinate systems."""
 
+import collections
 from concurrent import futures
-from typing import Any, Optional, Sequence, Union
+from typing import Any, Sequence
 from connectomics.common import bounding_box
 from connectomics.common import box_generator
 from connectomics.segmentation import labels
@@ -56,12 +57,12 @@ def _relabel_segmentation(data, orig_to_low, old_uids):
 
 def warp_subvolume(
     image: np.ndarray,
-    image_box: bounding_box.BoundingBoxBase,
+    image_box: bounding_box.BoundingBox,
     coord_map: np.ndarray,
-    map_box: bounding_box.BoundingBoxBase,
+    map_box: bounding_box.BoundingBox,
     stride: float,
-    out_box: bounding_box.BoundingBoxBase,
-    interpolation: Optional[str] = None,
+    out_box: bounding_box.BoundingBox,
+    interpolation: str | None = None,
     offset: float = 0.0,
     parallelism: int = 1,
 ) -> np.ndarray:
@@ -193,9 +194,9 @@ def ndimage_warp(
     overlap: Sequence[int],
     order=1,
     map_coordinates=ndimage.map_coordinates,
-    image_box: Optional[bounding_box.BoundingBoxBase] = None,
-    map_box: Optional[bounding_box.BoundingBoxBase] = None,
-    out_box: Optional[bounding_box.BoundingBoxBase] = None,
+    image_box: bounding_box.BoundingBox | None = None,
+    map_box: bounding_box.BoundingBox | None = None,
+    out_box: bounding_box.BoundingBox | None = None,
     parallelism: int = 1,
 ) -> np.ndarray:
   """Warps a subvolume of data using ndimage.map_coordinates.
@@ -319,19 +320,19 @@ def render_tiles(
     stride: tuple[int, int] = (20, 20),
     margin: int = 50,
     parallelism: int = 1,
-    width: Optional[int] = None,
-    height: Optional[int] = None,
+    width: int | None = None,
+    height: int | None = None,
     use_clahe: bool = False,
     clahe_kwargs: ... = None,
-    margin_overrides: Optional[
-        dict[tuple[int, int], tuple[int, int, int, int]]
-    ] = None,
+    margin_overrides: (
+        dict[tuple[int, int], tuple[int, int, int, int]] | None
+    ) = None,
     return_warped_tiles: bool = False,
-    tile_masks: Optional[dict[tuple[int, int], np.ndarray]] = None,
-) -> Union[
-    tuple[np.ndarray, np.ndarray],
-    tuple[np.ndarray, np.ndarray, dict[tuple[int, int], Any]],
-]:
+    tile_masks: dict[tuple[int, int], np.ndarray] | None = None,
+) -> (
+    tuple[np.ndarray, np.ndarray]
+    | tuple[np.ndarray, np.ndarray, dict[tuple[int, int], Any]]
+):
   """Warps a collection of tiles into a larger image.
 
   All values in the 'tiles' and 'positions' maps are assumed to
@@ -514,3 +515,70 @@ def render_tiles(
     return ret, ret_mask
   else:
     return ret, ret_mask, warped_image_map
+
+
+def warp_points(
+    points: np.ndarray,
+    coord_map: np.ndarray,
+    map_box: bounding_box.BoundingBox,
+    stride: float,
+) -> np.ndarray:
+  """Warps a collection of points.
+
+  Preserves the input dtype of point coordinates. Only in-plane warping
+  is currently supported. If an integer type is used, transformed coordinates
+  are going to be rounded.
+
+  Args:
+    points: [n, 3] set of points to map; last dimension stores coordinates in
+      XYZ order
+    coord_map: [2, z, y, x] coordinate map
+    map_box: bounding box of the coordinate map
+    stride: stride of the coordinate map in pixels
+
+  Returns:
+    [n, 3] array of warped points (same format as 'points')
+  """
+
+  origin_xy = map_box.start[:2] * stride
+
+  abs_map = map_utils.to_absolute(coord_map, stride)
+  abs_map += np.array(origin_xy).reshape((2, 1, 1, 1))
+
+  z_to_idx = collections.defaultdict(list)
+  for i, p in enumerate(points):
+    z_to_idx[p[2]].append(i)
+
+  points = np.array(points)
+  assert points.ndim == 2
+  assert points.shape[1] == 3
+  assert coord_map.shape[0] == 2
+
+  ret = points.copy()
+
+  iiy, iix = np.ogrid[: coord_map.shape[2], : coord_map.shape[3]]
+  iiy = iiy + map_box.start[1]
+  iix = iix + map_box.start[0]
+  source = ((iiy * stride).ravel(), (iix * stride).ravel())
+
+  for z, to_map in z_to_idx.items():
+    z_rel = int(z - map_box.start[2])
+    dense_x = interpolate.RegularGridInterpolator(
+        source, abs_map[0, z_rel, ...], bounds_error=False, fill_value=None
+    )
+    dense_y = interpolate.RegularGridInterpolator(
+        source, abs_map[1, z_rel, ...], bounds_error=False, fill_value=None
+    )
+
+    q = points[to_map, 1], points[to_map, 0]  # yx
+    dx = dense_x(q).astype(np.float32)
+    dy = dense_y(q).astype(np.float32)
+
+    if np.issubdtype(ret.dtype, np.integer):
+      dx = np.round(dx).astype(ret.dtype)
+      dy = np.round(dy).astype(ret.dtype)
+
+    ret[to_map, 0] = dx
+    ret[to_map, 1] = dy
+
+  return ret

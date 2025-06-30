@@ -112,6 +112,19 @@ class WarpTest(absltest.TestCase):
 
     np.testing.assert_array_equal(warped, expected)
 
+  def test_warp_points(self):
+    coord_map = np.zeros((2, 10, 3, 3))
+    coord_map[0, 0, ...] = 10
+    coord_map[1, 1, ...] = 20
+
+    points = np.array([[101, 201, 0], [105, 205, 1]])
+    map_box = bounding_box.BoundingBox(start=(10, 20, 0), size=(3, 3, 10))
+    stride = 10
+    warped = warp.warp_points(points, coord_map, map_box, stride)
+
+    expected = np.array([[111, 201, 0], [105, 225, 1]])
+    np.testing.assert_array_equal(warped, expected)
+
 
 if __name__ == '__main__':
   absltest.main()
