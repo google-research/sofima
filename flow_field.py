@@ -620,7 +620,8 @@ class JAXMaskedXCorrWithStatsCalculator:
               np.clip(query[:, i], 0, pre_targeting_field.shape[i + 1] - 1)
           )
 
-        tg_offsets = np.nan_to_num((pre_targeting_field[:, *q].T))
+        field_indexer = (slice(None),) + tuple(q)
+        tg_offsets = np.nan_to_num((pre_targeting_field[field_indexer].T))
         tg_offsets = tg_offsets.astype(int)[:, ::-1]  # [b, xy[z]] -> [b, [z]yx]
         new_starts = pre_starts + tg_offsets
 
