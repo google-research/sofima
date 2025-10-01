@@ -110,15 +110,17 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
     return (0, 0, 0), (0, 0, 0)
 
   def _collect_tile_boxes(self, tile_shape_zyx: ZYX):
+    tile_meshes = StitchAndRender3dTiles._tile_meshes
+    assert tile_meshes is not None
     map_box = bounding_box.BoundingBox(
         start=(0, 0, 0),
-        size=StitchAndRender3dTiles._tile_meshes.shape[2:][::-1],
+        size=tile_meshes.shape[2:][::-1],
     )
 
-    for i in range(StitchAndRender3dTiles._tile_meshes.shape[1]):
+    for i in range(tile_meshes.shape[1]):
       tx, ty = StitchAndRender3dTiles._tile_idx_to_xy[i]
 
-      mesh = StitchAndRender3dTiles._tile_meshes[:, i, ...]
+      mesh = tile_meshes[:, i, ...]
       tg_box = map_utils.outer_box(mesh, map_box, self._stride)
 
       # Region that can be rendered with the current tile, in global
@@ -166,7 +168,8 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
       tpe: futures.Executor,
   ) -> set[futures.Future[tuple[np.ndarray, Any]]]:
     fs = set([])
-
+    tile_meshes = StitchAndRender3dTiles._tile_meshes
+    assert tile_meshes is not None
     # Bounding boxes for the tile and its mesh in its own coordinate system
     # (with the tile placed at the origin).
     image_box = bounding_box.BoundingBox(
@@ -174,7 +177,7 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
     )
     map_box = bounding_box.BoundingBox(
         start=(0, 0, 0),
-        size=StitchAndRender3dTiles._tile_meshes.shape[2:][::-1],
+        size=tile_meshes.shape[2:][::-1],
     )
 
     for i, (out_box, tg_box) in StitchAndRender3dTiles._tile_boxes.items():
@@ -184,7 +187,7 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
 
       logging.info('Processing source %r (%r)', i, out_box)
 
-      coord_map = StitchAndRender3dTiles._tile_meshes[:, i, ...]
+      coord_map = tile_meshes[:, i, ...]
       tx, ty = StitchAndRender3dTiles._tile_idx_to_xy[i]
 
       if i not in StitchAndRender3dTiles._inverted_meshes:
