@@ -156,6 +156,7 @@ class OptimAffineTransformSectionwise(Decorator):
             transform_initial = transform
 
           idx = [slice(None) for _ in range(array.ndim)]
+          assert batch_idx is not None
           idx[batch_idx] = i
           array[tuple(idx)] = transform.reshape(array[tuple(idx)].shape)
 
