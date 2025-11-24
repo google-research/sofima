@@ -198,6 +198,11 @@ def ndimage_warp(
     map_box: bounding_box.BoundingBox | None = None,
     out_box: bounding_box.BoundingBox | None = None,
     parallelism: int = 1,
+    out_scale: tuple[float, float, float] | tuple[float, float] = (
+        1.0,
+        1.0,
+        1.0,
+    ),
 ) -> np.ndarray:
   """Warps a subvolume of data using ndimage.map_coordinates.
 
@@ -219,6 +224,8 @@ def ndimage_warp(
     out_box: bounding box for which to generate warped data; if not specified,
       assumed to be the same as image_box
     parallelism: number of threads to use for warping
+    out_scale: xy[z] scaling vector out_image_voxel_size /
+      source_image_voxel_size
 
   Returns:
     warped image
@@ -244,9 +251,15 @@ def ndimage_warp(
     if image_box is None:
       raise ValueError('image_box has to be specified when map_box is used.')
 
+    # Make map relative to the origin of loaded data (in target space units).
     src_map += (
-        map_box.start[:dim] * stride[::-1] - image_box.start[:dim]
+        map_box.start[:dim] * stride[::-1]
+        - image_box.start[:dim] / out_scale[:dim]
     ).reshape(dim, 1, 1, 1)
+
+  # Translate map to source (data) units.
+  reshaper = tuple([slice(None)] + [np.newaxis] * dim)
+  src_map = src_map.copy() * np.array(out_scale[:dim])[reshaper]
 
   sub_dim = 0
   image_size_xyz = image.shape[::-1]
@@ -269,6 +282,7 @@ def ndimage_warp(
       back_shift_small_boxes=True,
   )
 
+  # Compute the position of map_box relative to the out_box.
   if map_box is not None:
     assert out_box is not None
     offset = (map_box.start * stride[::-1] - out_box.start)[::-1]
@@ -283,17 +297,24 @@ def ndimage_warp(
             in_sub_box.start[::-1][sub_dim:], in_sub_box.end[::-1][sub_dim:]
         )
     ]
+    # Coords define the fragment of the coordinate map (src_coords, map_box)
+    # for the current working box (in_sub_box). This is needed because map_box
+    # can contain additional padding/context area around out_box (to avoid edge
+    # effects).
     src_coords = np.mgrid[sel]
     src_coords = [(c - o) / s for c, s, o in zip(src_coords, stride, offset)]
+
+    # ZYX coordinates at which we will need to sample the input image.
     dense_coords = [
         map_coordinates(eval_coords, src_coords, order=1)
         for eval_coords in src_map[::-1]
     ]
 
-    out_sub_box = calc.index_to_cropped_box(i)
-
     # Warp image data for the current subvolume.
     sub_warped = map_coordinates(image, dense_coords, order=order)
+
+    # Crop and save data for the current subvolume.
+    out_sub_box = calc.index_to_cropped_box(i)
     rel_box = out_sub_box.translate(-in_sub_box.start)
 
     warped[out_sub_box.to_slice3d()[sub_dim:]] = sub_warped[

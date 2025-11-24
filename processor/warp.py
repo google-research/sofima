@@ -390,8 +390,8 @@ class WarpByMap(subvolume_processor.SubvolumeProcessor):
 
     # TODO(blakely): Convert stride to Sequence[float]
     stride: float
-    map_volinfo: str
-    data_volinfo: str
+    map_volinfo: str | metadata.DecoratedVolume
+    data_volinfo: str | metadata.DecoratedVolume
     map_decorator_specs: str | dict[str, Any] | None = None
     data_decorator_specs: str | dict[str, Any] | None = None
     map_scale: float = 1.0
@@ -487,7 +487,7 @@ class WarpByMap(subvolume_processor.SubvolumeProcessor):
     if self._map_decorator_specs:
       map_vol = metadata.DecoratedVolume(
           path=self._map_volinfo,
-          decorator_specs=self._map_decorator_specs,
+          decorator_specs=json.dumps(self._map_decorator_specs),
       )
     map_vol = self._open_volume(map_vol)
     map_box = map_vol.clip_box_to_volume(map_box)
@@ -546,7 +546,7 @@ class WarpByMap(subvolume_processor.SubvolumeProcessor):
     if self._data_decorator_specs:
       data_vol = metadata.DecoratedVolume(
           path=self._data_volinfo,
-          decorator_specs=self._data_decorator_specs,
+          decorator_specs=json.dumps(self._data_decorator_specs),
       )
     data_vol = self._open_volume(data_vol)
 

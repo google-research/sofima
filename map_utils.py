@@ -121,7 +121,7 @@ def _as_vec(value: StrideZYX, dim: int) -> Sequence[float]:
   if not isinstance(value, collections.abc.Sequence):
     return (value,) * dim
 
-  assert len(value) == dim
+  assert len(value) == dim, f'Dimension mismatch: {value=} vs {dim=}'
   return value
 
 
