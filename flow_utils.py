@@ -129,7 +129,7 @@ def reconcile_flows(flows: Sequence[np.ndarray], max_gradient: float,
       labeled, _ = ndimage.label(valid[z, ...])
       ids, sizes = np.unique(labeled, return_counts=True)
       small = ids[sizes < min_patch_size]
-      bad[z, ...][np.in1d(labeled.ravel(), small).reshape(labeled.shape)] = True
+      bad[z, ...][np.isin(labeled.ravel(), small).ravel().reshape(labeled.shape)] = True
     apply_mask(ret, bad)
 
   return ret
