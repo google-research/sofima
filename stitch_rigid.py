@@ -22,7 +22,7 @@ by the estimated offset. This system is relaxed to establish an initial position
 for every tile based on cross-correlation between tile overlaps.
 """
 
-from typing import Any, Tuple, Union, Mapping, Optional
+from typing import Any, Mapping
 
 import jax.numpy as jnp
 import numpy as np
@@ -33,7 +33,7 @@ from sofima import mesh
 
 TileXY = tuple[int, int]
 MaskMap = Mapping[TileXY, np.ndarray]
-Vector = Union[Tuple[int, int], Tuple[int, int, int], Union[Tuple[int], Tuple[Any, ...]]]
+Vector = tuple[int, int] | tuple[int, int, int] | tuple[int] | tuple[Any, ...]
 
 
 def _estimate_offset(
@@ -41,7 +41,7 @@ def _estimate_offset(
     b: np.ndarray,
     range_limit: float,
     filter_size: int = 10,
-    masks: Optional[Tuple[np.ndarray]] = None,
+    masks: tuple[np.ndarray] | None = None,
 ) -> tuple[list[float], float]:
   """Estimates the global offset vector between images 'a' and 'b'."""
   # Mask areas with insufficient dynamic range.
@@ -61,7 +61,8 @@ def _estimate_offset(
 
   mfc = flow_field.JAXMaskedXCorrWithStatsCalculator()
   xo, yo, _, pr = mfc.flow_field(
-      a, b, pre_mask=a_mask, post_mask=b_mask, patch_size=a.shape, step=(1, 1)
+      a, b, pre_mask=a_mask, post_mask=b_mask, patch_size=a.shape, step=(1, 1),
+      batch_size=1
   ).squeeze()
   return [xo, yo], abs(pr)
 
@@ -72,7 +73,7 @@ def _estimate_offset_horiz(
     right: np.ndarray,
     range_limit: float,
     filter_size: int,
-    masks: Optional[Tuple[np.ndarray]] = None,
+    masks: tuple[np.ndarray] | None = None,
 ) -> tuple[list[float], float]:
   return _estimate_offset(
       a=left[:, -overlap:],
@@ -89,7 +90,7 @@ def _estimate_offset_vert(
     bot: np.ndarray,
     range_limit: float,
     filter_size: int,
-    masks: Optional[Tuple[np.ndarray]],
+    masks: tuple[np.ndarray] | None,
 ) -> tuple[list[float], float]:
   return _estimate_offset(
       a=top[-overlap:, :],
@@ -107,7 +108,7 @@ def compute_coarse_offsets(
     min_range=(10, 100, 0),
     min_overlap=160,
     filter_size=10,
-    mask_map: Optional[MaskMap] = None
+    mask_map: MaskMap | None = None
 ) -> tuple[np.ndarray, np.ndarray]:
   """Computes a coarse offset between every neighboring tile pair.
 
@@ -475,7 +476,7 @@ def elastic_tile_mesh_3d(
 def optimize_coarse_mesh(
     cx,
     cy,
-    cfg: Optional[mesh.IntegrationConfig] = None,
+    cfg: mesh.IntegrationConfig | None = None,
     mesh_fn=elastic_tile_mesh,
 ) -> np.ndarray:
   """Computes rough initial positions of the tiles.

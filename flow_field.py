@@ -603,7 +603,15 @@ class JAXMaskedXCorrWithStatsCalculator:
 
     for pos_zyx in progress_fn(list(utils.batch(oyx, batch_size))):
       pos_zyx = np.array(pos_zyx)
-      post_starts = pos_zyx * np.array(step).reshape((1, -1))
+      real_batch_size = pos_zyx.shape[0]
+
+      if real_batch_size < batch_size:
+        pad_len = batch_size - real_batch_size
+        pos_zyx_proc = np.pad(pos_zyx, ((0, pad_len), (0, 0)), mode='edge')
+      else:
+        pos_zyx_proc = pos_zyx
+
+      post_starts = pos_zyx_proc * np.array(step).reshape((1, -1))
 
       pre_starts = post_starts - patch_offset
       pre_starts = np.clip(pre_starts, 0, np.inf).astype(int)
