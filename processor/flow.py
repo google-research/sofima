@@ -107,11 +107,11 @@ class EstimateFlow(subvolume_processor.SubvolumeProcessor):
     self._config = config
     assert config.patch_size % config.stride == 0
 
-    if config.mask_configs is not None:
+    if config.mask_configs:
       if isinstance(config.mask_configs, str):
         config.mask_configs = self._get_mask_configs(config.mask_configs)
 
-    if config.selection_mask_configs is not None:
+    if config.selection_mask_configs:
       if isinstance(config.selection_mask_configs, str):
         config.selection_mask_configs = self._get_mask_configs(
             config.selection_mask_configs
@@ -169,10 +169,10 @@ class EstimateFlow(subvolume_processor.SubvolumeProcessor):
     sel_mask = mask = None
 
     with beam_utils.timer_counter(self.namespace, 'build-mask'):
-      if self._config.mask_configs is not None:
+      if self._config.mask_configs:
         mask = self._build_mask(self._config.mask_configs, box)
 
-      if self._config.selection_mask_configs is not None:
+      if self._config.selection_mask_configs:
         sel_box = box.scale(
             [1.0 / self._config.stride, 1.0 / self._config.stride, 1]
         )
@@ -374,7 +374,7 @@ class ReconcileAndFilterFlows(subvolume_processor.SubvolumeProcessor):
       assert a.pixel_size.x / b.pixel_size.x == a.pixel_size.y / b.pixel_size.y
       assert a.pixel_size.z == b.pixel_size.z
 
-    if config.mask_configs is not None:
+    if config.mask_configs:
       if isinstance(config.mask_configs, str):
         config.mask_configs = self._get_mask_configs(config.mask_configs)
 
@@ -384,7 +384,7 @@ class ReconcileAndFilterFlows(subvolume_processor.SubvolumeProcessor):
 
   def process(self, subvol: Subvolume) -> SubvolumeOrMany:
     box = subvol.bbox
-    if self._config.mask_configs is not None:
+    if self._config.mask_configs:
       mask = self._build_mask(self._config.mask_configs, box)
     else:
       mask = None
@@ -582,10 +582,10 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
           f' stride {config.stride}'
       )
 
-    if config.mask_configs is not None:
+    if config.mask_configs:
       config.mask_configs = self._get_mask_configs(config.mask_configs)
 
-    if config.selection_mask_configs is not None:
+    if config.selection_mask_configs:
       config.selection_mask_configs = self._get_mask_configs(
           config.selection_mask_configs
       )
@@ -680,7 +680,7 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
     ret[2, ...] = self._config.delta_z
 
     sel_mask = None
-    if self._config.selection_mask_configs is not None:
+    if self._config.selection_mask_configs:
       sel_mask = self._build_mask(self._config.selection_mask_configs, out_box)
 
     mfc = flow_field.JAXMaskedXCorrWithStatsCalculator()
@@ -695,7 +695,7 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
 
       image_box = curr_image_box.translate([0, 0, z])
       curr_mask = None
-      if self._config.mask_configs is not None:
+      if self._config.mask_configs:
         curr_mask = self._build_mask(
             self._config.mask_configs, image_box
         ).squeeze()
@@ -732,7 +732,7 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
         logging.info('.. image loaded.')
         t1 = time.time()
 
-        if self._config.mask_configs is not None:
+        if self._config.mask_configs:
           prev_mask = self._build_mask(
               self._config.mask_configs, prev_box
           ).squeeze()
