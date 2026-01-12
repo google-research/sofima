@@ -345,7 +345,7 @@ class RelaxMesh(subvolume_processor.SubvolumeProcessor):
       flow_volume = self._open_volume(flow.volume)
 
       flow_field = flow_volume[bbox.to_slice4d()]
-      if flow_volume.info.num_channels == 2:
+      if flow_volume.meta.num_channels == 2:
         offset = np.array([0, 0, flow.delta_z])
         ref_box = bbox.translate(-offset)
         ref_mesh = self.compute_ref_mesh(flow_field, ref_box, stride)
