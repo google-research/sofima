@@ -486,6 +486,8 @@ class JAXMaskedXCorrWithStatsCalculator:
       post_patch_size: int | Sequence[int] | None = None,
       pre_targeting_field: np.ndarray | None = None,
       pre_targeting_step: int | Sequence[int] | None = None,
+      post_targeting_field: np.ndarray | None = None,
+      post_targeting_step: int | Sequence[int] | None = None,
       progress_fn: Callable[[list[T]], Iterator[T]] = _silent_fn,
   ):
     """Computes the flow field from post to pre.
@@ -515,6 +517,10 @@ class JAXMaskedXCorrWithStatsCalculator:
         to target the location of 'pre' patches; typically from a prior run of
         'flow_field'
       pre_targeting_step: step size at which 'pre_targeting_field' values were
+        sampled (same units as 'step', yx order)
+      post_targeting_field: like 'pre_targeting_field', but for shifting the
+        'post_image' patches
+      post_targeting_step: step size at which 'post_targeting_field' values were
         sampled (same units as 'step', yx order)
       progress_fn: function taking a list of batches of 'post' z[yx] start
         positions to process; can be used with tqdm to track progress
@@ -642,7 +648,36 @@ class JAXMaskedXCorrWithStatsCalculator:
 
         pre_starts = pre_starts + tg_offsets
 
+      post_offsets = None
+      if post_targeting_field is not None and post_targeting_step is not None:
+        post_center = (np.array(post_patch_size) // 2).reshape((1, -1))
+        tg_step = np.array(post_targeting_step).reshape((1, -1))
+        query = np.round((post_starts + post_center) / tg_step)
+        query = query.astype(int)  # [b, [z]yx]
+        q = []
+        for i in range(query.shape[-1]):
+          q.append(
+              np.clip(query[:, i], 0, post_targeting_field.shape[i + 1] - 1)
+          )
+
+        field_indexer = (slice(None),) + tuple(q)
+        post_offsets = np.nan_to_num((post_targeting_field[field_indexer].T))
+        post_offsets = post_offsets.astype(int)[
+            :, ::-1
+        ]  # [b, xy[z]] -> [b, [z]yx]
+        new_starts = post_starts + post_offsets
+
+        # Clip offsets that would cause the 'post' patch to go out of bounds.
+        post_offsets = post_offsets - np.minimum(new_starts, 0)
+        img_shape = np.array(post_image.shape)[None, ...]
+        new_ends = new_starts + np.array(post_patch_size)[None, ...]
+        overshoot = np.maximum(new_ends, img_shape) - img_shape
+        post_offsets = post_offsets - overshoot
+
+        post_starts = post_starts + post_offsets
+
       pre_starts = np.clip(pre_starts, 0, np.inf).astype(int)
+      post_starts = np.clip(post_starts, 0, np.inf).astype(int)
 
       logging.info('.. estimating %d patches.', len(pos_zyx))
       peaks = np.array(
@@ -666,7 +701,11 @@ class JAXMaskedXCorrWithStatsCalculator:
       for i, coord in enumerate(pos_zyx):
         v = peaks[i]
         if tg_offsets is not None:
-          v[:d] = v[:d] + tg_offsets[i, ::-1]
+          v[:d] = v[:d] + tg_offsets[i, ::-1]  # xy[z]
+
+        if post_offsets is not None:
+          v[:d] = v[:d] - post_offsets[i, ::-1]  # xy[z]
+
         output[np.index_exp[:] + tuple(coord)] = v
 
     logging.info('Flow field estimation complete.')

@@ -93,6 +93,37 @@ class FlowFieldTest(absltest.TestCase):
     self.assertEqual(peaks[0, 2], peak_max / peak_support)  # sharpness
     self.assertEqual(peaks[0, 3], 0)  # peak ratio
 
+  def test_post_targeting(self):
+    pre_image = np.zeros((120, 120), dtype=np.uint8)
+    post_image = np.zeros((120, 120), dtype=np.uint8)
+
+    pre_image[50, 55] = 255
+    post_image[100, 100] = 255
+
+    calculator = flow_field.JAXMaskedXCorrWithStatsCalculator()
+
+    # Without targeting, the features are too far apart to be picked up.
+    field = calculator.flow_field(
+        pre_image, post_image, patch_size=80, step=40, batch_size=4)
+    np.testing.assert_array_equal(np.isnan(field[:, 0, 0]), True)
+
+    post_targeting_field = np.full((2, 2, 2), 40.0, dtype=np.float32)
+
+    # With targeting, a flow field of magnitude larger than the
+    # normally possible max of patch_size // 2 can be estimated.
+    field = calculator.flow_field(
+        pre_image,
+        post_image,
+        patch_size=80,
+        step=40,
+        batch_size=4,
+        post_targeting_field=post_targeting_field,
+        post_targeting_step=40)
+
+    np.testing.assert_array_equal([4, 2, 2], field.shape)
+    np.testing.assert_array_equal(-45 * np.ones((2, 2)), field[0, ...])
+    np.testing.assert_array_equal(-50 * np.ones((2, 2)), field[1, ...])
+
 
 if __name__ == '__main__':
   absltest.main()

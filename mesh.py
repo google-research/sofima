@@ -522,8 +522,8 @@ def velocity_verlet(
 
 
 def relax_mesh(
-    x: jnp.ndarray,
-    prev: jnp.ndarray | None,
+    x: jax.Array,
+    prev: jax.Array | None,
     config: IntegrationConfig,
     mesh_force=inplane_force,
     prev_fn=None,
