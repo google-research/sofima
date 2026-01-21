@@ -567,8 +567,6 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
     """
     del input_volinfo_or_ts_spec
 
-    self._config = config
-
     if config.patch_size % config.stride != 0:
       raise ValueError(
           f'patch_size {config.patch_size} not a multiple of stride'
@@ -583,12 +581,19 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
       )
 
     if config.mask_configs:
-      config.mask_configs = self._get_mask_configs(config.mask_configs)
+      config = dataclasses.replace(
+          config, mask_configs=self._get_mask_configs(config.mask_configs)
+      )
 
     if config.selection_mask_configs:
-      config.selection_mask_configs = self._get_mask_configs(
-          config.selection_mask_configs
+      config.selection_mask_configs = dataclasses.replace(
+          config,
+          selection_mask_configs=self._get_mask_configs(
+              config.selection_mask_configs
+          ),
       )
+
+    self._config = config
 
   def _build_mask(
       self,
