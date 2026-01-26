@@ -15,6 +15,7 @@
 """Flow field estimation from SOFIMA."""
 
 import dataclasses
+import gc
 import time
 from typing import Any, Sequence
 
@@ -594,6 +595,7 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
       )
 
     self._config = config
+    logging.info('EstimateMissingFlow running with config: %r', config)
 
   def _build_mask(
       self,
@@ -661,22 +663,6 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
     out_box = out_box.adjusted_by(end=-offset)
     input_ndarray = input_ndarray[:, :, : out_box.size[1], : out_box.size[0]]
 
-    patch_size = self._config.patch_size
-    curr_image_box = bounding_box.BoundingBox(
-        start=(
-            out_box.start[0] * stride - patch_size // 2,
-            out_box.start[1] * stride - patch_size // 2,
-            out_box.start[2],
-        ),
-        size=(
-            (out_box.size[0] - 1) * stride + patch_size,
-            (out_box.size[1] - 1) * stride + patch_size,
-            1,
-        ),
-    )
-    curr_image_box = image_volume.clip_box_to_volume(curr_image_box)
-    assert curr_image_box is not None
-
     # The input flow forms the initial state of the output. We will try
     # to fill-in any invalid (NaN) pixels by computing flow against
     # earlier sections.
@@ -690,6 +676,66 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
 
     mfc = flow_field.JAXMaskedXCorrWithStatsCalculator()
     invalid = np.isnan(input_ndarray[0, ...])
+
+    patch_size = self._config.patch_size
+    curr_image_box = bounding_box.BoundingBox(
+        start=(
+            out_box.start[0] * stride - patch_size // 2,
+            out_box.start[1] * stride - patch_size // 2,
+            out_box.start[2],
+        ),
+        size=(
+            (out_box.size[0] - 1) * stride + patch_size,
+            (out_box.size[1] - 1) * stride + patch_size,
+            invalid.shape[0],
+        ),
+    )
+    curr_image_box = image_volume.clip_box_to_volume(curr_image_box)
+    assert curr_image_box is not None
+
+    if self._config.delta_z > 0:
+      search_deltas = range(
+          self._config.delta_z + 1, self._config.max_delta_z + 1
+      )
+      load_start_z = out_box.start[2] - self._config.max_delta_z
+      load_end_z = out_box.end[2]
+    else:
+      search_deltas = range(
+          self._config.delta_z - 1, self._config.max_delta_z - 1, -1
+      )
+      load_start_z = out_box.start[2]
+      # max_delta_z is negative.
+      load_end_z = out_box.end[2] - self._config.max_delta_z
+
+    load_box = bounding_box.BoundingBox(
+        start=(
+            prev_image_box.start[0],
+            prev_image_box.start[1],
+            load_start_z,
+        ),
+        size=(
+            prev_image_box.size[0],
+            prev_image_box.size[1],
+            load_end_z - load_start_z,
+        ),
+    )
+    load_box = image_volume.clip_box_to_volume(load_box)
+
+    logging.info('Loading image data: %r', load_box)
+    full_image_stack = image_volume.asarray[load_box.to_slice4d()][0, ...]
+    full_mask = None
+    if self._config.mask_configs:
+      full_mask = self._build_mask(self._config.mask_configs, load_box)
+      logging.info('Loaaded mask: %r', full_mask.shape)
+
+    # The 'curr' image is a subset of the loaded stack, centered within the
+    # 'prev' image (which includes the search radius).
+    curr_rel_start = curr_image_box.start - load_box.start
+    curr_slice = (
+        slice(curr_rel_start[1], curr_rel_start[1] + curr_image_box.size[1]),
+        slice(curr_rel_start[0], curr_rel_start[0] + curr_image_box.size[0]),
+    )
+
     for z in range(0, invalid.shape[0]):
       z0 = box.start[2] + z
       logging.info('Processing rel_z=%d abs_z=%d', z, z0)
@@ -698,12 +744,13 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
         beam_utils.counter(namespace, 'sections-already-valid').inc()
         continue
 
-      image_box = curr_image_box.translate([0, 0, z])
+      curr_z_idx = (out_box.start[2] + z) - load_box.start[2]
+      assert curr_z_idx >= 0
+      assert curr_z_idx < full_image_stack.shape[0]
+
       curr_mask = None
       if self._config.mask_configs:
-        curr_mask = self._build_mask(
-            self._config.mask_configs, image_box
-        ).squeeze()
+        curr_mask = full_mask[curr_z_idx, ...][curr_slice]
         if np.all(curr_mask):
           beam_utils.counter(namespace, 'sections-masked').inc()
           continue
@@ -715,37 +762,23 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
       if sel_mask is not None:
         mask &= sel_mask[z, ...]
 
-      curr = image_volume.asarray[image_box.to_slice4d()].squeeze()
+      curr = full_image_stack[curr_z_idx, ...][curr_slice]
 
-      delta_z = self._config.delta_z
-      if delta_z > 0:
-        rng = range(delta_z + 1, self._config.max_delta_z + 1)
-      else:
-        rng = range(delta_z - 1, self._config.max_delta_z - 1, -1)
-
-      for delta_z in rng:
-        if (
-            box.start[2] - delta_z < 0
-            or box.end[2] - delta_z >= image_volume.volume_size[2]
-        ):
+      for delta_z in search_deltas:
+        prev_z_idx = curr_z_idx - delta_z
+        if prev_z_idx < 0 or prev_z_idx >= full_image_stack.shape[0]:
           break
 
         t_start = time.time()
-        prev_box = prev_image_box.translate([0, 0, z - delta_z])
-        logging.info('Trying delta_z=%d (%r)', delta_z, prev_box)
-        prev = image_volume.asarray[prev_box.to_slice4d()].squeeze()
-        logging.info('.. image loaded.')
+        logging.info('Trying delta_z=%d', delta_z)
+        prev_mask = None
+        prev = full_image_stack[prev_z_idx, ...]
         t1 = time.time()
 
         if self._config.mask_configs:
-          prev_mask = self._build_mask(
-              self._config.mask_configs, prev_box
-          ).squeeze()
+          prev_mask = full_mask[prev_z_idx, ...]
           if np.all(prev_mask):
             continue
-        else:
-          prev_mask = None
-        logging.info('.. mask loaded.')
 
         # Limit the number of estimation attempts per voxel. Attempts
         # are only counted when voxels in both sections are unmasked.
@@ -803,5 +836,9 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
             t4 - t3,
             t5 - t4,
         )
+
+    del full_image_stack
+    del full_mask
+    gc.collect()
 
     return Subvolume(ret, out_box)
