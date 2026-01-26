@@ -1,0 +1,27 @@
+authors:
+- affiliation: Google (Switzerland)
+  family-names: Januszewski
+  given-names: "Micha\u0142"
+  orcid: 0000-0002-3480-2744
+- affiliation: Google (United States)
+  family-names: Blakely
+  given-names: Tim
+  orcid: 0000-0003-0995-5471
+- affiliation: Google (Switzerland)
+  family-names: Lueckmann
+  given-names: Jan-Matthis
+  orcid: 0000-0003-4320-4663
+cff-version: 1.2.0
+date-released: '2024-01-19'
+doi: 10.5281/zenodo.10534541
+keywords:
+- stitching
+- microscopy
+- montaging
+- alignment
+license:
+- apache-2.0
+message: If you use this software, please cite it using the metadata from this file.
+title: 'SOFIMA: Scalable Optical Flow-based Image Montaging and Alignment'
+type: software
+url: "https://github.com/google-research/sofima"

@@ -4,6 +4,9 @@ SOFIMA (Scalable Optical Flow-based Image Montaging and Alignment) is a tool
 for stitching, aligning and warping large 2d, 3d and 4d microscopy datasets.
 
 [![License](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.10534541.svg)](https://zenodo.org/records/10534541)
+
+Please cite as https://zenodo.org/records/10534541
 
 This is not an officially supported Google product.
 
@@ -32,6 +35,13 @@ and the mesh node positions.
 
  * [electron microscopy tile stitching](https://colab.research.google.com/github/google-research/sofima/blob/main/notebooks/em_stitching.ipynb)
  * [electron microscopy section alignment](https://colab.research.google.com/github/google-research/sofima/blob/main/notebooks/em_alignment.ipynb)
+ * [LICONN 3d tile stitching](https://colab.research.google.com/github/google-research/sofima/blob/main/notebooks/liconn_inplane_stitching.ipynb)
+
+# Citation
+
+If you use this software in your research, please cite it using the following metadata:
+
+> Januszewski, M., Blakely, T., & Lueckmann, J.-M. (2024). SOFIMA: Scalable Optical Flow-based Image Montaging and Alignment. Zenodo. https://doi.org/10.5281/zenodo.10534541
 
 # License
 
