@@ -498,25 +498,25 @@ def _resample_2d_slice(
     tg_y_shape: tuple,
     method: str,
 ):
-    """
-    Helper function to resample a single Z-slice of the coordinate map.
-    """
-    valid = np.isfinite(map_slice_u)
-    if not np.any(valid):
-        return z, None, None
+  """
+  Helper function to resample a single Z-slice of the coordinate map.
+  """
+  valid = np.isfinite(map_slice_u)
+  if not np.any(valid):
+    return z, None, None
 
-    src_points = src_x[valid], src_y[valid]
-    try:
-        u, v = _interpolate_points(
-            src_points,
-            tg_points,
-            map_slice_u[valid],
-            map_slice_v[valid],
-            method=method,
-        )
-        return z, u.reshape(tg_x_shape), v.reshape(tg_y_shape)
-    except spatial.qhull.QhullError:
-        return z, None, None
+  src_points = src_x[valid], src_y[valid]
+  try:
+    u, v = _interpolate_points(
+        src_points,
+        tg_points,
+        map_slice_u[valid],
+        map_slice_v[valid],
+        method=method,
+    )
+    return z, u.reshape(tg_x_shape), v.reshape(tg_y_shape)
+  except spatial.qhull.QhullError:
+    return z, None, None
 
 def resample_map(
     coord_map: np.ndarray,
@@ -558,33 +558,32 @@ def resample_map(
       dtype=coord_map.dtype,
   )
 
-  # Parallelize the Z-loop using ProcessPoolExecutor
-  with concurrent.futures.ProcessPoolExecutor(max_workers=parallelism) as executor:
-      futures = []
-      for z in range(coord_map.shape[1]):
-          # Pass the individual u/v slices and required grids to the worker
-          futures.append(
-              executor.submit(
-                  _resample_2d_slice,
-                  z,
-                  coord_map[0, z, ...],
-                  coord_map[1, z, ...],
-                  src_x,
-                  src_y,
-                  tg_points,
-                  tg_x.shape,
-                  tg_y.shape,
-                  method,
-              )
-          )
+  with concurrent.futures.ThreadPoolExecutor(max_workers=parallelism) as executor:
+    futures = []
+    for z in range(coord_map.shape[1]):
+      # Pass the individual u/v slices and required grids to the worker
+      futures.append(
+        executor.submit(
+          _resample_2d_slice,
+          z,
+          coord_map[0, z, ...],
+          coord_map[1, z, ...],
+          src_x,
+          src_y,
+          tg_points,
+          tg_x.shape,
+          tg_y.shape,
+          method,
+        )
+      )
 
-      # Collect results as they finish and reconstruct the output array
-      for future in concurrent.futures.as_completed(futures):
-          if verbose:  print('z =', z)
-          z, u_res, v_res = future.result()
-          if u_res is not None:
-              ret[0, z, ...] = u_res
-              ret[1, z, ...] = v_res
+    # Collect results as they finish and reconstruct the output array
+    for future in concurrent.futures.as_completed(futures):
+      if verbose:  print('z =', z)
+      z, u_res, v_res = future.result()
+      if u_res is not None:
+        ret[0, z, ...] = u_res
+        ret[1, z, ...] = v_res
 
   return ret
 
