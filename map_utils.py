@@ -473,30 +473,30 @@ def invert_map(
         dtype=coord_map.dtype,
     )
 
-    with concurrent.futures.ProcessPoolExecutor(max_workers=parallelism) as executor:
-        futures = []
-        for z in range(coord_map.shape[1]):
-            # Pass the specific slice to the worker
-            map_slice = coord_map[:, z, ...]
-            futures.append(
-                executor.submit(
-                    _invert_2d_slice,
-                    z,
-                    map_slice,
-                    src_coords,
-                    query_points,
-                    query_coords[1].shape,
-                    query_coords[0].shape
-                )
-            )
+    with concurrent.futures.ThreadPoolExecutor(max_workers=parallelism) as executor:
+      futures = []
+      for z in range(coord_map.shape[1]):
+        # Pass the specific slice to the worker
+        map_slice = coord_map[:, z, ...]
+        futures.append(
+          executor.submit(
+            _invert_2d_slice,
+            z,
+            map_slice,
+            src_coords,
+            query_points,
+            query_coords[1].shape,
+            query_coords[0].shape
+          )
+        )
 
-        # Collect results as they finish
-        for future in concurrent.futures.as_completed(futures):
-            if verbose:  print('z =', z)
-            z, u_res, v_res = future.result()
-            if u_res is not None:
-                ret_uv[0, z, ...] = u_res
-                ret_uv[1, z, ...] = v_res
+      # Collect results as they finish
+      for future in concurrent.futures.as_completed(futures):
+        if verbose:  print('z =', z)
+        z, u_res, v_res = future.result()
+        if u_res is not None:
+          ret_uv[0, z, ...] = u_res
+          ret_uv[1, z, ...] = v_res
 
     return to_relative(ret_uv, stride, dst_box)
 
