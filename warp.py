@@ -344,7 +344,7 @@ def render_tiles(
     width: int | None = None,
     height: int | None = None,
     use_clahe: bool = False,
-    clahe_kwargs: ... = None,
+    clahe_kwargs=None,
     margin_overrides: (
         dict[tuple[int, int], tuple[int, int, int, int]] | None
     ) = None,
