@@ -579,8 +579,8 @@ def resample_map(
 
     # Collect results as they finish and reconstruct the output array
     for future in concurrent.futures.as_completed(futures):
-      if verbose:  print('z =', z)
       z, u_res, v_res = future.result()
+      if verbose:  print('z =', z)
       if u_res is not None:
         ret[0, z, ...] = u_res
         ret[1, z, ...] = v_res
