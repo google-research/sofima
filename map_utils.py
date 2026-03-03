@@ -473,7 +473,7 @@ def invert_map(
         dtype=coord_map.dtype,
     )
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=parallelism) as executor:
+    with concurrent.futures.ProcessPoolExecutor(max_workers=parallelism) as executor:
       futures = []
       for z in range(coord_map.shape[1]):
         # Pass the specific slice to the worker
