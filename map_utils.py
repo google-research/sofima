@@ -487,6 +487,37 @@ def invert_map(
   return to_relative(ret, stride, dst_box)
 
 
+def _resample_2d_slice(
+    z: int,
+    map_slice_u: np.ndarray,
+    map_slice_v: np.ndarray,
+    src_x: np.ndarray,
+    src_y: np.ndarray,
+    tg_points: tuple,
+    tg_x_shape: tuple,
+    tg_y_shape: tuple,
+    method: str,
+):
+  """
+  Helper function to resample a single Z-slice of the coordinate map.
+  """
+  valid = np.isfinite(map_slice_u)
+  if not np.any(valid):
+    return z, None, None
+
+  src_points = src_x[valid], src_y[valid]
+  try:
+    u, v = _interpolate_points(
+        src_points,
+        tg_points,
+        map_slice_u[valid],
+        map_slice_v[valid],
+        method=method,
+    )
+    return z, u.reshape(tg_x_shape), v.reshape(tg_y_shape)
+  except spatial.qhull.QhullError:
+    return z, None, None
+
 def resample_map(
     coord_map: np.ndarray,
     src_box: bounding_box.BoundingBox,
@@ -494,6 +525,8 @@ def resample_map(
     src_stride: float,
     dst_stride: float,
     method='linear',
+    verbose: bool = False,
+    parallelism: int | None = 1,
 ) -> np.ndarray:
   """Resamples a coordinate map to a new grid.
 
@@ -524,24 +557,33 @@ def resample_map(
       np.nan,
       dtype=coord_map.dtype,
   )
-  for z in range(coord_map.shape[1]):
-    valid = np.isfinite(coord_map[0, z, ...])
-    if not np.any(valid):
-      continue
 
-    src_points = src_x[valid], src_y[valid]
-    try:
-      u, v = _interpolate_points(
-          src_points,
-          tg_points,  #
-          coord_map[0, z, ...][valid],
-          coord_map[1, z, ...][valid],
-          method=method,
+  with concurrent.futures.ProcessPoolExecutor(max_workers=parallelism) as executor:
+    futures = []
+    for z in range(coord_map.shape[1]):
+      # Pass the individual u/v slices and required grids to the worker
+      futures.append(
+        executor.submit(
+          _resample_2d_slice,
+          z,
+          coord_map[0, z, ...],
+          coord_map[1, z, ...],
+          src_x,
+          src_y,
+          tg_points,
+          tg_x.shape,
+          tg_y.shape,
+          method,
+        )
       )
-      ret[0, z, ...] = u.reshape(tg_x.shape)
-      ret[1, z, ...] = v.reshape(tg_y.shape)
-    except spatial.qhull.QhullError:
-      pass
+
+    # Collect results as they finish and reconstruct the output array
+    for future in concurrent.futures.as_completed(futures):
+      z, u_res, v_res = future.result()
+      if verbose:  print('z =', z)
+      if u_res is not None:
+        ret[0, z, ...] = u_res
+        ret[1, z, ...] = v_res
 
   return ret
 
