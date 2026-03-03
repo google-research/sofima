@@ -558,7 +558,7 @@ def resample_map(
       dtype=coord_map.dtype,
   )
 
-  with concurrent.futures.ThreadPoolExecutor(max_workers=parallelism) as executor:
+  with concurrent.futures.ProcessPoolExecutor(max_workers=parallelism) as executor:
     futures = []
     for z in range(coord_map.shape[1]):
       # Pass the individual u/v slices and required grids to the worker
