@@ -492,8 +492,8 @@ def invert_map(
 
       # Collect results as they finish
       for future in concurrent.futures.as_completed(futures):
-        if verbose:  print('z =', z)
         z, u_res, v_res = future.result()
+        if verbose:  print('z =', z)
         if u_res is not None:
           ret_uv[0, z, ...] = u_res
           ret_uv[1, z, ...] = v_res
