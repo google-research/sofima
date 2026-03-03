@@ -526,7 +526,7 @@ def resample_map(
     dst_stride: float,
     method='linear',
     verbose: bool = False,
-    parallelism: int = 1,
+    parallelism: int | None = 1,
 ) -> np.ndarray:
   """Resamples a coordinate map to a new grid.
 
