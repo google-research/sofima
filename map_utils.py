@@ -419,7 +419,7 @@ def invert_map(
     src_box: bounding_box.BoundingBox,
     dst_box: bounding_box.BoundingBox,
     stride: StrideZYX,
-    parallelism: int = 1,
+    parallelism: int | None = 1,
     verbose: bool = False,
 ) -> np.ndarray:
   """Inverts a coordinate map.
