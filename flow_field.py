@@ -146,7 +146,7 @@ def masked_xcorr(
   if use_jax:
     out = jnp.clip(out, min=-1, max=1)
   else:
-    np.clip(out, min=-1, max=1, out=out)
+    np.clip(out, min=-1, max=1, out=out)  # pyrefly: ignore[no-matching-overload]
 
   px_threshold = 0.3 * xnp.max(overlap_masked_px, keepdims=True)
   if use_jax:
@@ -189,7 +189,7 @@ def _peak_stats(peak1_val, peak2_val, peak1_idx, img, offset, peak_radius=5):
   peak_radius = np.array(peak_radius)
   size = 2 * peak_radius + 1
   start = jnp.asarray(inds) - size // 2
-  sharpness = img[inds] / jnp.min(jax.lax.dynamic_slice(img, start, size))
+  sharpness = img[inds] / jnp.min(jax.lax.dynamic_slice(img, start, size))  # pyrefly: ignore[bad-argument-type]
 
   return jnp.where(
       jnp.isinf(peak1_val),  #
@@ -237,7 +237,7 @@ def _batched_peaks(
   # Apply the maximum filter as a sequence of 1d filters.
   img_max = img
   strides = (1,) * dim
-  for i, s in enumerate(size):
+  for i, s in enumerate(size):  # pyrefly: ignore[unbound-name]
     patch = [1] * dim
     patch[i] = s
     img_max = jnp.max(
@@ -358,7 +358,7 @@ def _batched_xcorr(
       np.array(pre_batch.shape[-len(patch_size) :])
       + post_batch.shape[-len(patch_size) :]
   ) // 2 - 1
-  return (
+  return (  # pyrefly: ignore[bad-return]
       center_offset,  # pytype: disable=bad-return-type  # jax-ndarray
       masked_xcorr(
           pre_batch - pre_mean,
@@ -433,7 +433,7 @@ def batched_xcorr_peaks(
   )
   peaks = _batched_peaks(
       xcorr,
-      center_offset,
+      center_offset,  # pyrefly: ignore[bad-argument-type]
       min_distance,
       threshold_rel,  # pytype: disable=wrong-arg-types  # jax-ndarray
       peak_radius,
@@ -596,8 +596,8 @@ class JAXMaskedXCorrWithStatsCalculator:
       if post_mask is not None:
         post_mask = jnp.asarray(post_mask)
 
-    pre_image = jnp.asarray(pre_image)
-    post_image = jnp.asarray(post_image)
+    pre_image = jnp.asarray(pre_image)  # pyrefly: ignore[bad-assignment]
+    post_image = jnp.asarray(post_image)  # pyrefly: ignore[bad-assignment]
 
     # Offset to add to the starts of the 'prev' patches so that
     # the 'post' patches remain centered at the same location.

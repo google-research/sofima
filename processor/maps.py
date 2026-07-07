@@ -184,7 +184,7 @@ class ReconcileCrossBlockMaps(subvolume_processor.SubvolumeProcessor):
         block_end_inv = load_main_inv(z1)
 
     flat_box = bounding_box.BoundingBox(
-        start=box.start, size=(box.size[0], box.size[1], 1)
+        start=box.start, size=(box.size[0], box.size[1], 1)  # pyrefly: ignore[bad-argument-type]
     )
 
     # The interpolation is done so that the first section of the block ends up
@@ -438,10 +438,10 @@ class ResampleMap(subvolume_processor.SubvolumeProcessor):
     dst_box = dst_box.scale([ratio, ratio, 1.0])
 
     out_map = map_utils.resample_map(
-        rel_map, box, dst_box, config.stride, config.out_stride, config.method
+        rel_map, box, dst_box, config.stride, config.out_stride, config.method  # pyrefly: ignore[bad-argument-type]
     )
 
-    return [Subvolume(out_map, dst_box)]
+    return [Subvolume(out_map, dst_box)]  # pyrefly: ignore[bad-argument-type]
 
 
 class MaskIrregularities(subvolume_processor.SubvolumeProcessor):

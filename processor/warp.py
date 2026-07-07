@@ -118,7 +118,7 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
     )
 
     for i in range(tile_meshes.shape[1]):
-      tx, ty = StitchAndRender3dTiles._tile_idx_to_xy[i]
+      tx, ty = StitchAndRender3dTiles._tile_idx_to_xy[i]  # pyrefly: ignore[unsupported-operation]
 
       mesh = tile_meshes[:, i, ...]
       tg_box = map_utils.outer_box(mesh, map_box, self._stride)
@@ -158,7 +158,7 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
       mask[...] = 1
 
     # Compute a (2d) distance transform of the mask, for use in blending.
-    return edt.edt(mask, black_border=True, parallel=0)
+    return edt.edt(mask, black_border=True, parallel=0)  # pyrefly: ignore[not-callable]
 
   def _load_tile_images(
       self,
@@ -188,7 +188,7 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
       logging.info('Processing source %r (%r)', i, out_box)
 
       coord_map = tile_meshes[:, i, ...]
-      tx, ty = StitchAndRender3dTiles._tile_idx_to_xy[i]
+      tx, ty = StitchAndRender3dTiles._tile_idx_to_xy[i]  # pyrefly: ignore[unsupported-operation]
 
       if i not in StitchAndRender3dTiles._inverted_meshes:
         # Add context to avoid rounding issues in map inversion.
@@ -266,7 +266,7 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
     if StitchAndRender3dTiles._tile_meshes is None:
       data_path = self._tile_mesh_path
       with file.Path(data_path).open('rb') as f:
-        data = np.load(f, allow_pickle=True)
+        data = np.load(f, allow_pickle=True)  # pyrefly: ignore[bad-argument-type]
         StitchAndRender3dTiles._tile_idx_to_xy = {
             v: k for k, v in data['key_to_idx'].item().items()
         }
@@ -278,7 +278,7 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
 
     volstores = {}
     for i in range(StitchAndRender3dTiles._tile_meshes.shape[1]):
-      tile_id = self._key_to_idx[StitchAndRender3dTiles._tile_idx_to_xy[i]]
+      tile_id = self._key_to_idx[StitchAndRender3dTiles._tile_idx_to_xy[i]]  # pyrefly: ignore[unsupported-operation]
       volstores[i] = self._open_tile_volume(tile_id)
 
     # Bounding boxes representing a single tile placed the origin.
@@ -340,7 +340,7 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
     # there are some contrast differences.
     ret = img
     ret[norm > 0] /= norm[norm > 0]
-    ret = ret.astype(self.output_type(subvol.data.dtype))
+    ret = ret.astype(self.output_type(subvol.data.dtype))  # pyrefly: ignore[bad-argument-type]
 
     return self.crop_box_and_data(box, ret[None, ...])
 
@@ -486,7 +486,7 @@ class WarpByMap(subvolume_processor.SubvolumeProcessor):
     map_vol = self._map_volinfo
     if self._map_decorator_specs:
       map_vol = metadata.DecoratedVolume(
-          path=self._map_volinfo,
+          path=self._map_volinfo,  # pyrefly: ignore[bad-argument-type]
           decorator_specs=json.dumps(self._map_decorator_specs),
       )
     map_vol = self._open_volume(map_vol)
@@ -509,7 +509,7 @@ class WarpByMap(subvolume_processor.SubvolumeProcessor):
       logging.debug('No map found for %r.', box)
       return
 
-    data_box = map_utils.outer_box(rel_map, map_box, self._source_stride, 1)
+    data_box = map_utils.outer_box(rel_map, map_box, self._source_stride, 1)  # pyrefly: ignore[bad-argument-type]
     data_box = data_vol.clip_box_to_volume(data_box)
     if data_box is None or np.any(data_box.size == 0):
       logging.debug('Data out of bounds for map: %r.', map_box)
@@ -534,9 +534,9 @@ class WarpByMap(subvolume_processor.SubvolumeProcessor):
     subvol_size = np.array(list(-(-box.size[:2] // 2)) + [box.size[2]])
     subvol_size = -(-subvol_size // self._downsample) * self._downsample
 
-    calc = box_generator.BoxGenerator(box, subvol_size, box_overlap=(0, 0, 0))
+    calc = box_generator.BoxGenerator(box, subvol_size, box_overlap=(0, 0, 0))  # pyrefly: ignore[bad-argument-type]
     for sub_box in calc.boxes:
-      yield from self._generate_boxes_to_warp(data_vol, sub_box)
+      yield from self._generate_boxes_to_warp(data_vol, sub_box)  # pyrefly: ignore[bad-argument-type]
 
   def process(self, subvol: subvolume.Subvolume) -> subvolume.SubvolumeOrMany:
     box = subvol.bbox
@@ -545,7 +545,7 @@ class WarpByMap(subvolume_processor.SubvolumeProcessor):
     data_vol = self._data_volinfo
     if self._data_decorator_specs:
       data_vol = metadata.DecoratedVolume(
-          path=self._data_volinfo,
+          path=self._data_volinfo,  # pyrefly: ignore[bad-argument-type]
           decorator_specs=json.dumps(self._data_decorator_specs),
       )
     data_vol = self._open_volume(data_vol)
@@ -577,7 +577,7 @@ class WarpByMap(subvolume_processor.SubvolumeProcessor):
     # Warp data section-wise.
     for z in range(warped.shape[1]):
       curr_box = bounding_box.BoundingBox(
-          start=box.start + [0, 0, z], size=[box.size[0], box.size[1], 1]
+          start=box.start + [0, 0, z], size=[box.size[0], box.size[1], 1]  # pyrefly: ignore[bad-argument-type]
       )
       logging.debug('warping z=%d', z)
 
@@ -612,7 +612,7 @@ class WarpByMap(subvolume_processor.SubvolumeProcessor):
                 svt, warp_box, self._downsample, warped.dtype
             )
             downsampled.append(down_data)
-          write_box = down_box.translate(-box.start)
+          write_box = down_box.translate(-box.start)  # pyrefly: ignore[bad-argument-type]
           warped[write_box.to_slice4d()] = np.concatenate(
               downsampled, axis=0
           ).astype(warped.dtype)

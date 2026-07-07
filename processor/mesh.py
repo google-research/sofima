@@ -199,7 +199,7 @@ class RelaxMesh(subvolume_processor.SubvolumeProcessor):
           )
 
       offset = np.array([0, 0, delta_z])
-      ref_box = box.translate(-offset)
+      ref_box = box.translate(-offset)  # pyrefly: ignore[bad-argument-type]
       logging.info('Attempting to load ref. mesh for %r', ref_box)
       ref_mesh = self._load_stitched_tile(config.output_dir, ref_box)
       if ref_mesh is None:
@@ -221,11 +221,11 @@ class RelaxMesh(subvolume_processor.SubvolumeProcessor):
 
       curr_flow = np.array(
           map_utils.compose_maps_fast(  # pytype: disable=wrong-arg-types  # jax-ndarray
-              curr_flow,
-              box.start[::-1],
+              curr_flow,  # pyrefly: ignore[bad-argument-type]
+              box.start[::-1],  # pyrefly: ignore[bad-argument-type]
               stride,
-              ref_mesh,
-              box.start[::-1],
+              ref_mesh,  # pyrefly: ignore[bad-argument-type]
+              box.start[::-1],  # pyrefly: ignore[bad-argument-type]
               stride,
           )
       )
@@ -265,11 +265,11 @@ class RelaxMesh(subvolume_processor.SubvolumeProcessor):
 
     flow = np.array(
         map_utils.compose_maps_fast(  # pytype: disable=wrong-arg-types  # jax-ndarray
-            flow,
-            ref_box.start[::-1],
+            flow,  # pyrefly: ignore[bad-argument-type]
+            ref_box.start[::-1],  # pyrefly: ignore[bad-argument-type]
             stride,
-            ref_mesh,
-            ref_box.start[::-1],
+            ref_mesh,  # pyrefly: ignore[bad-argument-type]
+            ref_box.start[::-1],  # pyrefly: ignore[bad-argument-type]
             stride,
         )
     )
@@ -347,7 +347,7 @@ class RelaxMesh(subvolume_processor.SubvolumeProcessor):
       flow_field = flow_volume[bbox.to_slice4d()]
       if flow_volume.meta.num_channels == 2:
         offset = np.array([0, 0, flow.delta_z])
-        ref_box = bbox.translate(-offset)
+        ref_box = bbox.translate(-offset)  # pyrefly: ignore[bad-argument-type]
         ref_mesh = self.compute_ref_mesh(flow_field, ref_box, stride)
       else:
         ref_mesh = self.compute_ref_mesh_multiz(
@@ -482,8 +482,8 @@ class RelaxMesh(subvolume_processor.SubvolumeProcessor):
     start_x = self.maybe_update_init_state(start_x, prev, config.options)
 
     x, _, prep_steps = mesh_lib.relax_mesh(  # pytype: disable=wrong-arg-types  # jax-ndarray
-        start_x,
-        x,
+        start_x,  # pyrefly: ignore[bad-argument-type]
+        x,  # pyrefly: ignore[bad-argument-type]
         dataclasses.replace(
             integration_config, k0=integration_config.k0 / 10.0
         ),

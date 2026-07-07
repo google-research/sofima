@@ -57,7 +57,7 @@ def _estimate_offset(
   # Apply custom overlap masks
   if masks is not None:
     a_mask |= masks[0]
-    b_mask |= masks[1]
+    b_mask |= masks[1]  # pyrefly: ignore[bad-index]
 
   mfc = flow_field.JAXMaskedXCorrWithStatsCalculator()
   xo, yo, _, pr = mfc.flow_field(
@@ -211,7 +211,7 @@ def compute_coarse_offsets(
         offset = estimates[max_idx]
         done = True
 
-    if not done or abs(offset[axis]) < min_overlap:
+    if not done or abs(offset[axis]) < min_overlap:  # pyrefly: ignore[unbound-name]
       offset = np.inf, np.inf
 
     return offset

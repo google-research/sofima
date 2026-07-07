@@ -87,8 +87,8 @@ class ComposeCoordMaps(Decorator):
       read_domain_coord_map = _adjust_read_domain(domain, coord_map_ts)
 
       array[...] = compose_maps(
-          map1=np.array(input_ts[read_domain_input]).squeeze(),
-          map2=np.array(coord_map_ts[read_domain_coord_map]).squeeze(),
+          map1=np.array(input_ts[read_domain_input]).squeeze(),  # pyrefly: ignore[bad-argument-type]
+          map2=np.array(coord_map_ts[read_domain_coord_map]).squeeze(),  # pyrefly: ignore[bad-argument-type]
           **self._compose_args).reshape(array.shape)
 
     chunksize = []

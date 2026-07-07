@@ -106,7 +106,7 @@ def _interpolate_points(
     return np.array(ret)
 
   assert method in ('linear', 'cubic')
-  data_points = np.array(data_points).T
+  data_points = np.array(data_points).T  # pyrefly: ignore[bad-assignment]
   tri = spatial.Delaunay(np.ascontiguousarray(data_points, dtype=np.double))
 
   values = np.array(values).T  # [N, dim]
@@ -254,7 +254,7 @@ def fill_missing(
   elif dim == 3:
     query_coords = np.mgrid[: s[-3], : s[-2], : s[-1]]  # zyx
 
-  query_points = tuple([q.ravel() for q in query_coords[::-1]])  # xy[z]
+  query_points = tuple([q.ravel() for q in query_coords[::-1]])  # xy[z]  # pyrefly: ignore[unbound-name]
 
   rets = []
 
@@ -339,7 +339,7 @@ def outer_box(
     start[i] = x_min
     size[i] = -(int(-x_max) // tl) - x_min + 1
 
-  return bounding_box.BoundingBox(start, size)
+  return bounding_box.BoundingBox(start, size)  # pyrefly: ignore[bad-argument-type]
 
 
 def inner_box(
@@ -415,8 +415,8 @@ def invert_map(
   coord_map = coord_map.astype(np.float64)
   dim = coord_map.shape[0]
   stride = _as_vec(stride, dim)
-  src_box = src_box.adjusted_by(start=-dst_box.start, end=-dst_box.start)
-  dst_box = dst_box.adjusted_by(start=-dst_box.start, end=-dst_box.start)
+  src_box = src_box.adjusted_by(start=-dst_box.start, end=-dst_box.start)  # pyrefly: ignore[bad-argument-type]
+  dst_box = dst_box.adjusted_by(start=-dst_box.start, end=-dst_box.start)  # pyrefly: ignore[bad-argument-type]
   coord_map = to_absolute(coord_map, stride, src_box)
 
   def _sel_size(box):
@@ -646,9 +646,9 @@ def compose_maps_fast(
 
   stride1 = _as_vec(stride1, dim)
   stride2 = _as_vec(stride2, dim)
-  start1 = jnp.asarray(start1)
-  start2 = jnp.asarray(start2)
-  origin = jnp.minimum(start1, start2)
+  start1 = jnp.asarray(start1)  # pyrefly: ignore[bad-assignment]
+  start2 = jnp.asarray(start2)  # pyrefly: ignore[bad-assignment]
+  origin = jnp.minimum(start1, start2)  # pyrefly: ignore[bad-argument-type]
 
   def _ref_grid(coord_map, start, stride):
     start = (start - origin)[-dim:]  # yx
@@ -675,7 +675,7 @@ def compose_maps_fast(
       xx = (
           jax.scipy.ndimage.map_coordinates(
               map2[0, z, ...] + ref2[-1],
-              query_coords,
+              query_coords,  # pyrefly: ignore[bad-argument-type]
               order=1,
               mode=mode,
               cval=np.nan,
@@ -685,7 +685,7 @@ def compose_maps_fast(
       yy = (
           jax.scipy.ndimage.map_coordinates(
               map2[1, z, ...] + ref2[-2],
-              query_coords,
+              query_coords,  # pyrefly: ignore[bad-argument-type]
               order=1,
               mode=mode,
               cval=np.nan,
@@ -702,7 +702,7 @@ def compose_maps_fast(
     xx = (
         jax.scipy.ndimage.map_coordinates(
             map2[0, ...] + ref2[-1],
-            query_coords,
+            query_coords,  # pyrefly: ignore[bad-argument-type]
             order=1,
             mode=mode,
             cval=np.nan,
@@ -712,7 +712,7 @@ def compose_maps_fast(
     yy = (
         jax.scipy.ndimage.map_coordinates(
             map2[1, ...] + ref2[-2],
-            query_coords,
+            query_coords,  # pyrefly: ignore[bad-argument-type]
             order=1,
             mode=mode,
             cval=np.nan,
@@ -722,7 +722,7 @@ def compose_maps_fast(
     zz = (
         jax.scipy.ndimage.map_coordinates(
             map2[2, ...] + ref2[-3],
-            query_coords,
+            query_coords,  # pyrefly: ignore[bad-argument-type]
             order=1,
             mode=mode,
             cval=np.nan,
@@ -760,7 +760,7 @@ def mask_irregular(
   """
   assert len(coord_map.shape) == 3
   assert coord_map.shape[0] == 2
-  stride = np.asarray(stride)
+  stride = np.asarray(stride)  # pyrefly: ignore[bad-assignment]
 
   if max_frac is None:
     max_frac = 2 - frac
@@ -799,7 +799,7 @@ def make_affine_map(
   Returns:
     coordinate map representing the specified affine transform
   """
-  coord_map = np.array(_identity_map_absolute(box.size[::-1], stride)[::-1])
+  coord_map = np.array(_identity_map_absolute(box.size[::-1], stride)[::-1])  # pyrefly: ignore[bad-argument-type]
   coord_map[0, ...] += box.start[0]
   coord_map[1, ...] += box.start[1]
   coord_map[2, ...] += box.start[2]

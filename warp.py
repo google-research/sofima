@@ -179,9 +179,9 @@ def warp_subvolume(
   # Map IDs back to the original space, which might be beyond the range of
   # int32.
   if orig_to_low is not None:
-    warped = _relabel_segmentation(warped, orig_to_low, old_uids)
+    warped = _relabel_segmentation(warped, orig_to_low, old_uids)  # pyrefly: ignore[unbound-name]
   else:
-    warped = warped.astype(orig_dtype)
+    warped = warped.astype(orig_dtype)  # pyrefly: ignore[unbound-name]
 
   return warped
 
@@ -276,9 +276,9 @@ def ndimage_warp(
     out_box = bounding_box.BoundingBox(start=(0, 0, 0), size=image_size_xyz)
 
   calc = box_generator.BoxGenerator(
-      outer_box=bounding_box.BoundingBox(start=(0, 0, 0), size=out_box.size),
-      box_size=work_size,
-      box_overlap=overlap,
+      outer_box=bounding_box.BoundingBox(start=(0, 0, 0), size=out_box.size),  # pyrefly: ignore[bad-argument-type]
+      box_size=work_size,  # pyrefly: ignore[bad-argument-type]
+      box_overlap=overlap,  # pyrefly: ignore[bad-argument-type]
       back_shift_small_boxes=True,
   )
 
@@ -315,7 +315,7 @@ def ndimage_warp(
 
     # Crop and save data for the current subvolume.
     out_sub_box = calc.index_to_cropped_box(i)
-    rel_box = out_sub_box.translate(-in_sub_box.start)
+    rel_box = out_sub_box.translate(-in_sub_box.start)  # pyrefly: ignore[bad-argument-type]
 
     warped[out_sub_box.to_slice3d()[sub_dim:]] = sub_warped[
         rel_box.to_slice3d()[sub_dim:]
@@ -330,7 +330,7 @@ def ndimage_warp(
       f.result()
 
   if orig_to_low is not None:
-    warped = _relabel_segmentation(warped, orig_to_low, old_uids)
+    warped = _relabel_segmentation(warped, orig_to_low, old_uids)  # pyrefly: ignore[unbound-name]
 
   return warped.astype(image.dtype)
 
@@ -474,7 +474,7 @@ def render_tiles(
         0,
     ))
     out_box = bounding_box.BoundingBox(
-        start=out_box.start,
+        start=out_box.start,  # pyrefly: ignore[bad-argument-type]
         size=(tg_box.size[0] * stride[1], tg_box.size[1] * stride[0], 1),
     )
 

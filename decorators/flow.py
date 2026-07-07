@@ -93,9 +93,9 @@ def _mesh_relax_flow(flow: np.ndarray, **filter_args) -> np.ndarray:
 
   num_spatial_dim = flow.shape[0]
   if num_spatial_dim == 2:
-    res = sofima.mesh.relax_mesh(x, flow.squeeze(), cfg)
+    res = sofima.mesh.relax_mesh(x, flow.squeeze(), cfg)  # pyrefly: ignore[bad-argument-type]
   elif num_spatial_dim == 3:
-    res = sofima.mesh.relax_mesh(x, flow.squeeze(), cfg,
+    res = sofima.mesh.relax_mesh(x, flow.squeeze(), cfg,  # pyrefly: ignore[bad-argument-type]
                                  mesh_force=sofima.mesh.elastic_mesh_3d)
   else:
     raise ValueError(
@@ -297,9 +297,9 @@ class OptimFlow(Decorator):
         pad_left = np.array(self._patch_zyx) // np.array(self._step_zyx) // 2
         pad_width = [(0, 0)]
         if num_image_dims == 2:
-          pad_width.append([0, 0])
+          pad_width.append([0, 0])  # pyrefly: ignore[bad-argument-type]
         for left, total in zip(pad_left, pad_total):
-          pad_width.append([left, total - left])
+          pad_width.append([left, total - left])  # pyrefly: ignore[bad-argument-type]
         array[...] = np.pad(
             flow_post_to_pre, pad_width, constant_values=np.nan
         ).reshape(array.shape)

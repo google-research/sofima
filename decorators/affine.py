@@ -157,7 +157,7 @@ class OptimAffineTransformSectionwise(Decorator):
 
           idx = [slice(None) for _ in range(array.ndim)]
           assert batch_idx is not None
-          idx[batch_idx] = i
+          idx[batch_idx] = i  # pyrefly: ignore[unsupported-operation]
           array[tuple(idx)] = transform.reshape(array[tuple(idx)].shape)
 
     chunksize = [2, 3]

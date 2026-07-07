@@ -235,7 +235,7 @@ class EstimateFlow(subvolume_processor.SubvolumeProcessor):
     #   Δz < 0: box.start.z
     out_box = self.crop_box(box)
     out_box = bounding_box.BoundingBox(
-        start=out_box.start // [self._config.stride, self._config.stride, 1],
+        start=out_box.start // [self._config.stride, self._config.stride, 1],  # pyrefly: ignore[bad-argument-type]
         size=[ret.shape[-1], ret.shape[-2], out_box.size[2]],
     )
     if ret.shape[0] != out_box.size[2]:
@@ -272,7 +272,7 @@ class EstimateFlow(subvolume_processor.SubvolumeProcessor):
         - self._config.patch_size
         + self._config.stride
     ) // self._config.stride
-    return bounding_box.BoundingBox(start, size)
+    return bounding_box.BoundingBox(start, size)  # pyrefly: ignore[bad-argument-type]
 
 
 # TODO(blakely): Remove references to volinfos in favor of metadata
@@ -407,7 +407,7 @@ class ReconcileAndFilterFlows(subvolume_processor.SubvolumeProcessor):
         read_box = box.scale((scale, scale, 1))
         if scale < 1:
           read_box = read_box.adjusted_by(
-              start=-self._context[0], end=self._context[1]
+              start=-self._context[0], end=self._context[1]  # pyrefly: ignore[bad-argument-type]
           )
         read_box = vol.clip_box_to_volume(read_box)
         assert read_box is not None
@@ -587,7 +587,7 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
       )
 
     if config.selection_mask_configs:
-      config.selection_mask_configs = dataclasses.replace(
+      config.selection_mask_configs = dataclasses.replace(  # pyrefly: ignore[read-only]
           config,
           selection_mask_configs=self._get_mask_configs(
               config.selection_mask_configs
@@ -750,7 +750,7 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
 
       curr_mask = None
       if self._config.mask_configs:
-        curr_mask = full_mask[curr_z_idx, ...][curr_slice]
+        curr_mask = full_mask[curr_z_idx, ...][curr_slice]  # pyrefly: ignore[unsupported-operation]
         if np.all(curr_mask):
           beam_utils.counter(namespace, 'sections-masked').inc()
           continue
@@ -776,7 +776,7 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
         t1 = time.time()
 
         if self._config.mask_configs:
-          prev_mask = full_mask[prev_z_idx, ...]
+          prev_mask = full_mask[prev_z_idx, ...]  # pyrefly: ignore[unsupported-operation]
           if np.all(prev_mask):
             continue
 

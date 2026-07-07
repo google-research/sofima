@@ -217,7 +217,7 @@ def elastic_mesh_3d(
   if not isinstance(stride, collections.abc.Sequence):
     stride = (stride,) * 3
 
-  stride = np.array(stride)
+  stride = np.array(stride)  # pyrefly: ignore[bad-assignment]
   f_tot = None
   num_non_spatial = x.ndim - 3
   for direction in links:
@@ -246,7 +246,7 @@ def elastic_mesh_3d(
       else:
         raise ValueError('Only |v| <= 1 values supported within links.')
 
-    l0 = np.array(stride * direction, dtype=np.float32).reshape(
+    l0 = np.array(stride * direction, dtype=np.float32).reshape(  # pyrefly: ignore[unsupported-operation]
         [3] + [1] * (x.ndim - 1)
     )
     dx = x[tuple(sel1)] - x[tuple(sel2)] + l0
@@ -256,7 +256,7 @@ def elastic_mesh_3d(
     # We want to maintain constant elasticity E and E ~ k⋅l0.
     # k is specified for the horizontal direction, and so l0 for it is
     # stride_x.
-    k_eff = k * stride[0] / l0
+    k_eff = k * stride[0] / l0  # pyrefly: ignore[bad-index]
     if prefer_orig_order:
       ones = jnp.ones_like(dx[0])
       factor = jnp.array([

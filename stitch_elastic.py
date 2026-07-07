@@ -77,8 +77,8 @@ def _relative_intersection(
 ) -> tuple[bounding_box.BoundingBox, bounding_box.BoundingBox]:
   ibox = box1.intersection(box2)
   return (
-      bounding_box.BoundingBox(start=ibox.start - box1.start, size=ibox.size),
-      bounding_box.BoundingBox(start=ibox.start - box2.start, size=ibox.size),
+      bounding_box.BoundingBox(start=ibox.start - box1.start, size=ibox.size),  # pyrefly: ignore[missing-attribute]
+      bounding_box.BoundingBox(start=ibox.start - box2.start, size=ibox.size),  # pyrefly: ignore[missing-attribute]
   )
 
 
@@ -169,10 +169,10 @@ def compute_flow_map3d(
           diff = s * np.round(isec_nbor.start[ax] / s) - isec_nbor.start[ax]
           off[ax] = -diff
 
-      nbor_box = nbor_box.translate(off)
+      nbor_box = nbor_box.translate(off)  # pyrefly: ignore[bad-argument-type]
       isec_curr, isec_nbor = _relative_intersection(curr_box, nbor_box)
 
-      assert np.all(isec_curr.start % s == 0)
+      assert np.all(isec_curr.start % s == 0)  # pyrefly: ignore[unbound-name]
       assert np.all(isec_nbor.start % s == 0)
 
       offset = np.array(nbor_box.start - curr_box.start)
@@ -521,10 +521,10 @@ def _apply_flow(
 
   update = map_utils.compose_maps_fast(  # pytype: disable=wrong-arg-types  # jnp-type
       nbor_flow_3d,
-      start,
+      start,  # pyrefly: ignore[bad-argument-type]
       stride,
       nbor_mesh_3d,
-      jnp.zeros_like(start),
+      jnp.zeros_like(start),  # pyrefly: ignore[bad-argument-type]
       stride,
       mode='constant',
   )
@@ -558,8 +558,8 @@ def _apply_flow(
 
   if base_mesh.shape[0] == 3:
     tg_start_z = jnp.where(
-        ((mult == 1) & (offset_z < 0)) | ((mult == -1) & (offset_z > 0)),
-        nbor_mesh.shape[-3] - flow_z,
+        ((mult == 1) & (offset_z < 0)) | ((mult == -1) & (offset_z > 0)),  # pyrefly: ignore[unbound-name]
+        nbor_mesh.shape[-3] - flow_z,  # pyrefly: ignore[unbound-name]
         0,
     )
     tg_start = (0, tg_start_z) + tg_start[1:]
