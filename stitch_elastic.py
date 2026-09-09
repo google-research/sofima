@@ -254,11 +254,11 @@ def compute_flow_map(
       post_sel[1 - axis] = np.s_[:overlap]
 
       if ortho_offset > 0:  # post is shifted down relative to pre
-        pre_sel[axis] = np.s_[ortho_offset:]
-        post_sel[axis] = np.s_[:-ortho_offset]
+        pre_sel[axis] = np.s_[ortho_offset:]  # pyrefly: ignore[unsupported-operation]
+        post_sel[axis] = np.s_[:-ortho_offset]  # pyrefly: ignore[unsupported-operation]
       elif ortho_offset < 0:  # post is shifted up relative to pre
-        pre_sel[axis] = np.s_[:ortho_offset]
-        post_sel[axis] = np.s_[-ortho_offset:]
+        pre_sel[axis] = np.s_[:ortho_offset]  # pyrefly: ignore[unsupported-operation]
+        post_sel[axis] = np.s_[-ortho_offset:]  # pyrefly: ignore[unsupported-operation]
 
       pre = pre[tuple(pre_sel)]
       post = post[tuple(post_sel)]

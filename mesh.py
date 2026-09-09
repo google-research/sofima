@@ -229,13 +229,13 @@ def elastic_mesh_3d(
     pad_pos = list(pad_neg)
     for dim in direction[::-1]:  # zyx
       if dim == -1:
-        sel1.append(np.s_[:-1])
-        sel2.append(np.s_[1:])
+        sel1.append(np.s_[:-1])  # pyrefly: ignore[bad-argument-type]
+        sel2.append(np.s_[1:])  # pyrefly: ignore[bad-argument-type]
         pad_pos.append((0, 1))
         pad_neg.append((1, 0))
       elif dim == 1:
-        sel1.append(np.s_[1:])
-        sel2.append(np.s_[:-1])
+        sel1.append(np.s_[1:])  # pyrefly: ignore[bad-argument-type]
+        sel2.append(np.s_[:-1])  # pyrefly: ignore[bad-argument-type]
         pad_pos.append((1, 0))
         pad_neg.append((0, 1))
       elif dim == 0:
