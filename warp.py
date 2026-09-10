@@ -255,7 +255,7 @@ def ndimage_warp(
     src_map += (
         map_box.start[:dim] * stride[::-1]
         - image_box.start[:dim] / out_scale[:dim]
-    ).reshape(dim, 1, 1, 1)
+    ).reshape((dim,) + (1,) * dim)
 
   # Translate map to source (data) units.
   reshaper = tuple([slice(None)] + [np.newaxis] * dim)
@@ -270,7 +270,7 @@ def ndimage_warp(
     sub_dim = 1
 
   if out_box is not None:
-    warped = np.zeros(shape=out_box.size[::-1], dtype=image.dtype)
+    warped = np.zeros(shape=out_box.size[::-1][sub_dim:], dtype=image.dtype)
   else:
     warped = np.zeros_like(image)
     out_box = bounding_box.BoundingBox(start=(0, 0, 0), size=image_size_xyz)
@@ -285,7 +285,9 @@ def ndimage_warp(
   # Compute the position of map_box relative to the out_box.
   if map_box is not None:
     assert out_box is not None
-    offset = (map_box.start * stride[::-1] - out_box.start)[::-1]
+    offset = (
+        map_box.start[:dim] * stride[::-1] - out_box.start[:dim]
+    )[::-1]
   else:
     offset = (0, 0, 0)
 

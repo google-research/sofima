@@ -16,6 +16,7 @@
 """Tests for warp."""
 
 from absl.testing import absltest
+from absl.testing import parameterized
 from connectomics.common import bounding_box
 import numpy as np
 
@@ -124,6 +125,67 @@ class WarpTest(absltest.TestCase):
 
     expected = np.array([[111, 201, 0], [105, 225, 1]])
     np.testing.assert_array_equal(warped, expected)
+
+
+class NdimageWarpBoxesTest(parameterized.TestCase):
+
+  @parameterized.product(dim=[2, 3], parallelism=[1, 2], scaled=[False, True])
+  def test_cropped_output_with_boxes(self, dim, parallelism, scaled):
+    image_shape = (8, 12, 16)[-dim:]
+    image = np.zeros(image_shape, dtype=np.float32)
+    weights = np.array([1, 100, 10000])[:dim]
+    for weight, coord in zip(weights, np.indices(image_shape)[::-1]):
+      image += weight * coord
+
+    scale = np.array([2., 0.5, 1.] if scaled else [1., 1., 1.])[:dim]
+    stride_xyz = np.array([2, 3, 1])[:dim]
+    image_start = np.array([20, 30, 4])[:dim] * scale
+    map_start = np.array([8, 8, 2])[:dim]
+    map_size = (12, 10, 10)[:dim]
+    output_start = np.array([22, 33, 5])[:dim]
+    output_size = (5, 4, 3)[:dim]
+    displacement = np.array([1., 2., 0.])[:dim]
+
+    def box(start, size):
+      return bounding_box.BoundingBox(
+          start=tuple(start) + ((0,) if dim == 2 else ()),
+          size=tuple(size) + ((1,) if dim == 2 else ()),
+      )
+
+    coord_map = np.zeros((dim,) + map_size[::-1])
+    coord_map[:] = displacement.reshape((dim,) + (1,) * dim)
+    result = warp.ndimage_warp(
+        image, coord_map, tuple(stride_xyz[::-1]), (4, 3, 2)[:dim],
+        (1,) * dim, order=1,
+        image_box=box(image_start, image_shape[::-1]),
+        map_box=box(map_start, map_size),
+        out_box=box(output_start, output_size),
+        out_scale=tuple(scale), parallelism=parallelism,
+    )
+    expected = np.zeros(output_size[::-1])
+    for axis, coord in enumerate(np.indices(expected.shape)[::-1]):
+      source_coord = (
+          (coord + output_start[axis] + displacement[axis]) * scale[axis]
+          - image_start[axis]
+      )
+      expected += weights[axis] * source_coord
+    self.assertEqual(result.shape, expected.shape)
+    self.assertEqual(result.dtype, image.dtype)
+    np.testing.assert_allclose(result, expected, rtol=1e-6)
+
+  @parameterized.parameters(2, 3)
+  def test_output_box_without_map_box(self, dim):
+    shape = (4, 8, 10)[-dim:]
+    image = np.arange(np.prod(shape), dtype=np.float32).reshape(shape)
+    output_size = (6, 5, 1)
+    result = warp.ndimage_warp(
+        image, np.zeros((dim,) + shape), (1,) * dim,
+        (4,) * dim, (1,) * dim,
+        out_box=bounding_box.BoundingBox(start=(0, 0, 0), size=output_size),
+    )
+    expected = image[tuple(slice(0, n) for n in output_size[::-1][-dim:])]
+    self.assertEqual(result.shape, expected.shape)
+    np.testing.assert_array_equal(result, expected)
 
 
 if __name__ == '__main__':
