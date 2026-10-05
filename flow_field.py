@@ -359,7 +359,7 @@ def _batched_xcorr(
       + post_batch.shape[-len(patch_size) :]
   ) // 2 - 1
   return (  # pyrefly: ignore[bad-return]
-      center_offset,  # pytype: disable=bad-return-type  # jax-ndarray
+      center_offset,
       masked_xcorr(
           pre_batch - pre_mean,
           post_batch - post_mean,
@@ -435,7 +435,7 @@ def batched_xcorr_peaks(
       xcorr,
       center_offset,  # pyrefly: ignore[bad-argument-type]
       min_distance,
-      threshold_rel,  # pytype: disable=wrong-arg-types  # jax-ndarray
+      threshold_rel,
       peak_radius,
   )
   return peaks
@@ -574,7 +574,7 @@ class JAXMaskedXCorrWithStatsCalculator:
 
     if pre_mask is not None:
       s = geom_utils.query_integral_image(
-          _integral_image(pre_mask), patch_size, step  # pyrefly: ignore[bad-argument-type]
+          _integral_image(pre_mask), patch_size, step
       )
       m = (s / np.prod(patch_size) >= max_masked)[out_sel]
       selection_mask[m] = False
@@ -582,7 +582,7 @@ class JAXMaskedXCorrWithStatsCalculator:
 
     if post_mask is not None:
       s = geom_utils.query_integral_image(
-          _integral_image(post_mask), post_patch_size, step  # pyrefly: ignore[bad-argument-type]
+          _integral_image(post_mask), post_patch_size, step
       )
       m = (s / np.prod(post_patch_size) >= max_masked)[out_sel]
       selection_mask[m] = False

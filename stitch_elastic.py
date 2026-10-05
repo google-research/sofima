@@ -519,7 +519,7 @@ def _apply_flow(
     nbor_flow_3d = nbor_flow[:, None, ...]
     nbor_mesh_3d = nbor_mesh[:, None, ...]
 
-  update = map_utils.compose_maps_fast(  # pytype: disable=wrong-arg-types  # jnp-type
+  update = map_utils.compose_maps_fast(
       nbor_flow_3d,
       start,  # pyrefly: ignore[bad-argument-type]
       stride,
@@ -601,7 +601,7 @@ def _update_mesh(
   nbor_mesh = jax.lax.dynamic_index_in_dim(x, nbor_idx, axis=1, keepdims=False)
   unused = 1
   # pylint: disable=g-long-lambda
-  return (  # pytype: disable=bad-return-type  # jax-ndarray
+  return (  # pyrefly: ignore[bad-return]
       jax.lax.cond(
           nbor_idx == -1,  # invalid index?
           lambda _: mesh,  # nothing to update

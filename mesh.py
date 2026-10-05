@@ -276,7 +276,7 @@ def elastic_mesh_3d(
     fn = jnp.pad(f, pad_neg)
     f_tot -= fn
 
-  return f_tot  # pytype: disable=bad-return-type  # jax-ndarray
+  return f_tot  # pyrefly: ignore[bad-return]
 
 
 @dataclasses.dataclass(frozen=True)

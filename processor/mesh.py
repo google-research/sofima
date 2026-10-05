@@ -220,7 +220,7 @@ class RelaxMesh(subvolume_processor.SubvolumeProcessor):
       curr_flow[1, ...][~m] = np.nan
 
       curr_flow = np.array(
-          map_utils.compose_maps_fast(  # pytype: disable=wrong-arg-types  # jax-ndarray
+          map_utils.compose_maps_fast(
               curr_flow,  # pyrefly: ignore[bad-argument-type]
               box.start[::-1],  # pyrefly: ignore[bad-argument-type]
               stride,
@@ -264,7 +264,7 @@ class RelaxMesh(subvolume_processor.SubvolumeProcessor):
       flow_utils.apply_mask(ref_mesh, mask)
 
     flow = np.array(
-        map_utils.compose_maps_fast(  # pytype: disable=wrong-arg-types  # jax-ndarray
+        map_utils.compose_maps_fast(
             flow,  # pyrefly: ignore[bad-argument-type]
             ref_box.start[::-1],  # pyrefly: ignore[bad-argument-type]
             stride,
@@ -459,7 +459,7 @@ class RelaxMesh(subvolume_processor.SubvolumeProcessor):
 
     logging.info('Starting mesh relaxation with: %r', config)
 
-    x, e_kin, num_steps = mesh_lib.relax_mesh(x, prev, integration_config)  # pytype: disable=wrong-arg-types  # jax-ndarray
+    x, e_kin, num_steps = mesh_lib.relax_mesh(x, prev, integration_config)  # pyrefly: ignore[bad-argument-type, bad-assignment]
     x = np.array(x)
     orig_x = x.copy()
 
@@ -481,7 +481,7 @@ class RelaxMesh(subvolume_processor.SubvolumeProcessor):
     start_x = np.zeros_like(x)
     start_x = self.maybe_update_init_state(start_x, prev, config.options)
 
-    x, _, prep_steps = mesh_lib.relax_mesh(  # pytype: disable=wrong-arg-types  # jax-ndarray
+    x, _, prep_steps = mesh_lib.relax_mesh(  # pyrefly: ignore[bad-assignment]
         start_x,  # pyrefly: ignore[bad-argument-type]
         x,  # pyrefly: ignore[bad-argument-type]
         dataclasses.replace(
@@ -503,7 +503,7 @@ class RelaxMesh(subvolume_processor.SubvolumeProcessor):
     if mask is not None:
       flow_utils.apply_mask(x, mask)
 
-    x, e_kin2, reg_steps = mesh_lib.relax_mesh(x, prev, integration_config)  # pytype: disable=wrong-arg-types  # jax-ndarray
+    x, e_kin2, reg_steps = mesh_lib.relax_mesh(x, prev, integration_config)  # pyrefly: ignore[bad-argument-type, bad-assignment]
     x = np.array(x)
     return (
         x,
