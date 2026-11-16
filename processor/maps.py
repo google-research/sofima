@@ -227,6 +227,7 @@ class ReconcileCrossBlockMaps(subvolume_processor.SubvolumeProcessor):
     )
 
     block_size = z1 - z0
+    interior_z: list[tuple[int, float]] = []
     for z in range(max(box.start[2], z0), min(box.end[2], z1 + 1)):
       i = z - z0
       # Each section can be processed only once.
@@ -243,36 +244,71 @@ class ReconcileCrossBlockMaps(subvolume_processor.SubvolumeProcessor):
             xblock_post if self._backward else xblock_pre
         )
       else:
-
         if self._backward:
           scale = (block_size - i) / block_size
         else:
           scale = i / block_size
-
-        try:
-          # The output coordinate map here is the inverse of the argument
-          # passed to warp() in the comment above, i.e.:
-          #   (section * xblock_pre) * scaled_offset
-          interior_aligned = map_utils.compose_maps(
-              data[:, rel_z : rel_z + 1, ...],  #
-              flat_box,
-              self._stride,
-              xblock_pre,
-              flat_box,
-              self._stride,
-          )
-          data[:, rel_z : rel_z + 1, ...] = map_utils.compose_maps(  #
-              interior_aligned,
-              flat_box,
-              self._stride,
-              offset * scale,
-              flat_box,
-              self._stride,
-          )
-        except spatial.qhull.QhullError:
-          pass
+        interior_z.append((rel_z, scale))
 
       done.add(z)
+
+    if interior_z:
+      rel_zs = [rz for rz, _ in interior_z]
+      scales = np.array(
+          [sc for _, sc in interior_z], dtype=offset.dtype
+      ).reshape((1, len(interior_z), 1, 1))
+      sec_batch = data[:, rel_zs, ...]
+      batch_box = bounding_box.BoundingBox(
+          start=(
+              int(flat_box.start[0]),
+              int(flat_box.start[1]),
+              int(flat_box.start[2]),
+          ),
+          size=(int(flat_box.size[0]), int(flat_box.size[1]), len(interior_z)),
+      )
+      xblock_pre_batch = np.broadcast_to(xblock_pre, sec_batch.shape)
+      scaled_offset_batch = offset * scales
+      try:
+        # The output coordinate map here is the inverse of the argument
+        # passed to warp() in the comment above, i.e.:
+        #   (section * xblock_pre) * scaled_offset
+        interior_aligned = map_utils.compose_maps(
+            sec_batch,
+            batch_box,
+            self._stride,
+            xblock_pre_batch,
+            batch_box,
+            self._stride,
+        )
+        data[:, rel_zs, ...] = map_utils.compose_maps(
+            interior_aligned,
+            batch_box,
+            self._stride,
+            scaled_offset_batch,
+            batch_box,
+            self._stride,
+        )
+      except spatial.qhull.QhullError:
+        for rel_z, scale in interior_z:
+          try:
+            interior_aligned = map_utils.compose_maps(
+                data[:, rel_z : rel_z + 1, ...],
+                flat_box,
+                self._stride,
+                xblock_pre,
+                flat_box,
+                self._stride,
+            )
+            data[:, rel_z : rel_z + 1, ...] = map_utils.compose_maps(
+                interior_aligned,
+                flat_box,
+                self._stride,
+                offset * scale,
+                flat_box,
+                self._stride,
+            )
+          except spatial.qhull.QhullError:
+            pass
 
   def process(self, subvol: Subvolume) -> SubvolumeOrMany:
     box = subvol.bbox
@@ -461,14 +497,8 @@ class MaskIrregularities(subvolume_processor.SubvolumeProcessor):
 
   def process(self, subvol: Subvolume) -> SubvolumeOrMany:
     box = subvol.bbox
-    input_ndarray = subvol.data
-    ret = np.zeros_like(input_ndarray)
-
-    for z in range(0, input_ndarray.shape[1]):
-      section = input_ndarray[:, z, ...].copy()
-      map_utils.mask_irregular(section, self._stride, self._frac)
-      ret[:, z, ...] = section
-
+    ret = subvol.data.copy()
+    map_utils.mask_irregular_batch(ret, self._stride, self._frac)
     return self.crop_box_and_data(box, ret)
 
 
