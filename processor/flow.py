@@ -500,6 +500,8 @@ class EstimateMissingFlow(subvolume_processor.SubvolumeProcessor):
   and tries to compute flow vectors which are invalid in the input (NaNs).
   """
 
+  allows_direct_chunks = False
+
   @dataclasses.dataclass(frozen=True)
   class Config(dataclasses_json.DataClassJsonMixin):
     """Configuration for EstimateMissingFlow.

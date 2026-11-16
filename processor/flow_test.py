@@ -169,6 +169,41 @@ class EstimateMissingFlowTest(absltest.TestCase):
     # Channel 2 is initialized to delta_z (1).
     self.assertEqual(result_subvol.data[2, 0, 0, 0], 1)
 
+  def test_xy_border_shrinks_bbox_and_disables_direct_chunks(self):
+    self.assertFalse(flow.EstimateMissingFlow.allows_direct_chunks)
+    config = flow.EstimateMissingFlow.Config(
+        patch_size=16,
+        stride=16,
+        delta_z=1,
+        max_delta_z=2,
+        max_attempts=1,
+        mask_configs=None,
+        mask_only_for_patch_selection=False,
+        selection_mask_configs=None,
+        min_peak_sharpness=0.0,
+        min_peak_ratio=0.0,
+        max_magnitude=0,
+        batch_size=10,
+        image_volinfo="dummy_path",
+        image_cache_bytes=0,
+        mask_cache_bytes=0,
+        search_radius=16,
+    )
+    vol_data = np.zeros((1, 6, 128, 128), dtype=np.float32)
+    processor = TestEstimateMissingFlow(config, MockVolume(vol_data))
+    self.assertFalse(processor.allows_direct_chunks)
+
+    border_box = bounding_box.BoundingBox(start=(0, 0, 5), size=(4, 4, 1))
+    input_data = np.zeros((2, 1, 4, 4), dtype=np.float32)
+    result_subvol = processor.process(
+        subvolume.Subvolume(input_data, border_box)
+    )
+    self.assertEqual(
+        result_subvol.bbox,
+        bounding_box.BoundingBox(start=(1, 1, 5), size=(3, 3, 1)),
+    )
+    self.assertEqual(result_subvol.data.shape, (3, 1, 3, 3))
+
 
 if __name__ == "__main__":
   absltest.main()
