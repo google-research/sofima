@@ -17,7 +17,7 @@
 from concurrent import futures
 import dataclasses
 import json
-from typing import Any, Sequence
+from typing import Any, NamedTuple, Sequence
 
 from absl import logging
 from connectomics.common import bounding_box
@@ -35,8 +35,22 @@ from sofima import map_utils
 from sofima import warp
 
 
+YX = tuple[int, int]
 ZYX = tuple[int, int, int]
 XYZ = tuple[int, int, int]
+
+
+class _DtsCacheKey(NamedTuple):
+  """Cache key for 2D tile distance-transform blending masks."""
+
+  shape_yx: YX
+  has_left_margin: bool
+  has_right_margin: bool
+  has_top_margin: bool
+  has_bottom_margin: bool
+
+
+_DtsCache = dict[_DtsCacheKey, np.ndarray]
 
 
 class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
@@ -94,6 +108,7 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
     self._order = order
     self._parallelism = parallelism
     self._work_size = work_size
+    self._dts_cache: _DtsCache = {}
 
     self._key_to_idx = {}
     for y, row in enumerate(tile_map):
@@ -145,20 +160,38 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
       StitchAndRender3dTiles._tile_boxes[i] = out_box, tg_box
 
   def _get_dts(self, shape: ZYX, tx: int, ty: int) -> np.ndarray:
+    has_left = self._margin > 0 and tx > 0
+    has_right = self._margin > 0 and tx < self._tile_map.shape[-1] - 1
+    has_top = self._margin > 0 and ty > 0
+    has_bottom = self._margin > 0 and ty < self._tile_map.shape[-2] - 1
+    cache_key = _DtsCacheKey(
+        shape_yx=(int(shape[1]), int(shape[2])),
+        has_left_margin=has_left,
+        has_right_margin=has_right,
+        has_top_margin=has_top,
+        has_bottom_margin=has_bottom,
+    )
+    cached = self._dts_cache.get(cache_key)
+    if cached is not None:
+      return cached
+
     # Ignore up to _margin pixels on tile edges, with the exception of the
     # tiles at the outer sides of the tile grid.
     mask = np.zeros(shape[1:], dtype=bool)
     if self._margin > 0:
-      x0 = self._margin if tx > 0 else 0
-      x1 = -self._margin if tx < self._tile_map.shape[-1] - 1 else -1
-      y0 = self._margin if ty > 0 else 0
-      y1 = -self._margin if ty < self._tile_map.shape[-2] - 1 else -1
+      x0 = self._margin if has_left else 0
+      x1 = -self._margin if has_right else -1
+      y0 = self._margin if has_top else 0
+      y1 = -self._margin if has_bottom else -1
       mask[y0:y1, x0:x1] = 1
     else:
       mask[...] = 1
 
     # Compute a (2d) distance transform of the mask, for use in blending.
-    return edt.edt(mask, black_border=True, parallel=0)  # pyrefly: ignore[not-callable]
+    dts = edt.edt(mask, black_border=True, parallel=0)  # pyrefly: ignore[not-callable]
+    dts.flags.writeable = False
+    self._dts_cache[cache_key] = dts
+    return dts
 
   def _load_tile_images(
       self,
@@ -241,8 +274,10 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
         continue
 
       dts_2d = self._get_dts(tile_shape_zyx, tx, ty)
-      sub_dts = dts_2d[data_box.to_slice_tuple(0, 2)][None, ...]
-      sub_dts = np.repeat(sub_dts, data_box.size[2], axis=0)
+      sub_dts_2d = dts_2d[data_box.to_slice_tuple(0, 2)]
+      sub_dts = np.broadcast_to(
+          sub_dts_2d, (int(data_box.size[2]), *sub_dts_2d.shape)
+      )
 
       # Schedule data loading.
       context = inverted_map, tg_box, local_warp_box, sub_box, sub_dts, data_box
@@ -305,25 +340,13 @@ class StitchAndRender3dTiles(subvolume_processor.SubvolumeProcessor):
             data_box,
         ) = f.result()
 
-        image = warp.ndimage_warp(
-            image,
+        image, warped_dts = warp.ndimage_warp_multi(
+            [image, sub_dts],
             inverted_map,
             self._stride,
             work_size=self._work_size,
             overlap=(0, 0, 0),
-            order=self._order,
-            image_box=data_box,
-            map_box=tg_box,
-            out_box=local_warp_box,
-            parallelism=self._parallelism,
-        )
-
-        warped_dts = warp.ndimage_warp(
-            sub_dts,
-            inverted_map,
-            self._stride,
-            work_size=self._work_size,
-            overlap=(0, 0, 0),
+            orders=[self._order, 1],
             image_box=data_box,
             map_box=tg_box,
             out_box=local_warp_box,
