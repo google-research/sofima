@@ -388,9 +388,13 @@ class RelaxMesh(subvolume_processor.SubvolumeProcessor):
       self,
       x: np.ndarray,
       prev: np.ndarray | None,
-      options: MeshOptions,
+      options: MeshOptions | None,
   ) -> np.ndarray:
-    if options.init_state == MeshInitState.PREV_MEDIAN and prev is not None:
+    if (
+        options is not None
+        and options.init_state == MeshInitState.PREV_MEDIAN
+        and prev is not None
+    ):
       x[0, ...] = np.nanmedian(prev[0, ...])
       x[1, ...] = np.nanmedian(prev[1, ...])
       x = np.nan_to_num(x)

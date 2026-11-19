@@ -143,6 +143,41 @@ class MeshTest(absltest.TestCase):
     )
     np.testing.assert_allclose(f_2d[:2], f_3d[:2], atol=1e-5)
 
+  def test_relax_mesh_remove_drift_nan_masked_exterior(self):
+    yy, xx = np.mgrid[0:16, 0:16]
+    interior = ((yy - 7.5) ** 2 + (xx - 7.5) ** 2) <= 5.5**2
+    exterior = ~interior
+
+    x0 = np.zeros((2, 1, 16, 16), dtype=np.float32)
+    x0[0, 0] = 3.5 + 0.05 * xx
+    x0[1, 0] = -2.0 + 0.04 * yy
+    x0[:, 0, exterior] = np.nan
+
+    cfg = mesh.IntegrationConfig(
+        dt=0.01,
+        gamma=0.0,
+        k0=0.0,
+        k=0.1,
+        stride=(40.0, 40.0),
+        num_iters=100,
+        max_iters=10000,
+        stop_v_max=0.005,
+        prefer_orig_order=True,
+        remove_drift=True,
+    )
+    rel, e_kin, steps = mesh.relax_mesh(x0, None, cfg)
+    rel_np = np.asarray(rel)
+    self.assertLess(steps, cfg.max_iters)
+    self.assertTrue(np.all(np.isfinite(e_kin)))
+    self.assertTrue(np.all(np.isnan(rel_np[:, 0, exterior])))
+    self.assertTrue(np.all(np.isfinite(rel_np[:, 0, interior])))
+    self.assertAlmostEqual(
+        float(np.mean(rel_np[0, 0, interior])), 0.0, places=4
+    )
+    self.assertAlmostEqual(
+        float(np.mean(rel_np[1, 0, interior])), 0.0, places=4
+    )
+
 
 if __name__ == '__main__':
   absltest.main()

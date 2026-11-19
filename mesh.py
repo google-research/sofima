@@ -493,8 +493,11 @@ def velocity_verlet(
 
     if config.remove_drift:
       # Remove any global drift and recenter the nodes.
-      x -= jnp.mean(x, axis=(1, 2, 3), keepdims=True)
-      v -= jnp.mean(v, axis=(1, 2, 3), keepdims=True)
+      reduce_axes = tuple(range(1, x.ndim))
+      finite = jnp.isfinite(x)
+      x -= jnp.mean(x, axis=reduce_axes, keepdims=True, where=finite)
+      v_mean = jnp.mean(v, axis=reduce_axes, keepdims=True, where=finite)
+      v = jnp.where(finite, v - v_mean, 0.0)
 
     return x, v, a, dt, alpha, n_pos, cap
 
