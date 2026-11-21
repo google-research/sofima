@@ -109,10 +109,14 @@ def reconcile_flows(flows: Sequence[np.ndarray], max_gradient: float,
 
   if max_gradient > 0:
     # Invalidate regions where the gradient is too large.
-    m = np.abs(np.diff(ret[0, ...], axis=-1, prepend=0)) > max_gradient
-    m |= np.abs(np.diff(ret[0, ...], axis=-1, append=0)) > max_gradient
-    m |= np.abs(np.diff(ret[1, ...], axis=-2, prepend=0)) > max_gradient
-    m |= np.abs(np.diff(ret[1, ...], axis=-2, append=0)) > max_gradient
+    # Compare existing neighbors only; the field outside the array is unknown.
+    dx = np.abs(np.diff(ret[0, ...], axis=-1)) > max_gradient
+    dy = np.abs(np.diff(ret[1, ...], axis=-2)) > max_gradient
+    m = np.zeros(ret.shape[1:], dtype=bool)
+    m[..., 1:] |= dx
+    m[..., :-1] |= dx
+    m[..., 1:, :] |= dy
+    m[..., :-1, :] |= dy
     apply_mask(ret, m)
 
   # Filter out points that deviate too much from the median. This gets rid
