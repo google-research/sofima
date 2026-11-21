@@ -339,6 +339,7 @@ def elastic_tile_mesh(
   """Computes force on nodes of a 2d tile mesh.
 
   Unused arguments are defined for compatibility with the mesh solver.
+  Nonfinite offset components denote unavailable constraints and exert no force.
 
   Args:
     x: [2, z, y, x] mesh where every node represents a tile
@@ -361,14 +362,14 @@ def elastic_tile_mesh(
 
   fx = dx - cx[0, :, :, :-1]  # applies to (0,0)
   f = jnp.concatenate([fx[None, ...], zeros], axis=0)
-  f = jnp.nan_to_num(f)
+  f = jnp.nan_to_num(f, posinf=0.0, neginf=0.0)
   f_tot += jnp.pad(f, [[0, 0], [0, 0], [0, 0], [0, 1]])
   f_tot -= jnp.pad(f, [[0, 0], [0, 0], [0, 0], [1, 0]])
 
   zeros = jnp.zeros_like(x[0:1, :, :-1, :])
   fy = dy - cy[1, :, :-1, :]
   f = jnp.concatenate([zeros, fy[None, ...]], axis=0)
-  f = jnp.nan_to_num(f)
+  f = jnp.nan_to_num(f, posinf=0.0, neginf=0.0)
   f_tot += jnp.pad(f, [[0, 0], [0, 0], [0, 1], [0, 0]])
   f_tot -= jnp.pad(f, [[0, 0], [0, 0], [1, 0], [0, 0]])
 
@@ -376,7 +377,7 @@ def elastic_tile_mesh(
   dx = x[0, :, 1:, :] - x[0, :, :-1]
   fx = dx - cy[0, :, :-1, :]
   f = jnp.concatenate([fx[None, ...], zeros], axis=0)
-  f = jnp.nan_to_num(f)
+  f = jnp.nan_to_num(f, posinf=0.0, neginf=0.0)
   f_tot += jnp.pad(f, [[0, 0], [0, 0], [0, 1], [0, 0]])
   f_tot -= jnp.pad(f, [[0, 0], [0, 0], [1, 0], [0, 0]])
 
@@ -384,7 +385,7 @@ def elastic_tile_mesh(
   dy = x[1, :, :, 1:] - x[1, :, :, :-1]
   fy = dy - cx[1, :, :, :-1]
   f = jnp.concatenate([zeros, fy[None, ...]], axis=0)
-  f = jnp.nan_to_num(f)
+  f = jnp.nan_to_num(f, posinf=0.0, neginf=0.0)
   f_tot += jnp.pad(f, [[0, 0], [0, 0], [0, 0], [0, 1]])
   f_tot -= jnp.pad(f, [[0, 0], [0, 0], [0, 0], [1, 0]])
 
@@ -403,6 +404,7 @@ def elastic_tile_mesh_3d(
   """Computes force on nodes of a 3d tile mesh.
 
   Unused arguments are defined for compatibility with the mesh solver.
+  Nonfinite offset components denote unavailable constraints and exert no force.
 
   Args:
     x: [3, z, y, x] mesh where every node represents a tile
@@ -424,7 +426,7 @@ def elastic_tile_mesh_3d(
   dx = x[0, :, :, 1:] - x[0, :, :, :-1]
   fx = dx - cx[0, :, :, :-1]  # applies to (0,0)
   f = jnp.concatenate([fx[None, ...], zeros, zeros], axis=0)
-  f = jnp.nan_to_num(f)
+  f = jnp.nan_to_num(f, posinf=0.0, neginf=0.0)
   f_tot += jnp.pad(f, [[0, 0], [0, 0], [0, 0], [0, 1]])
   f_tot -= jnp.pad(f, [[0, 0], [0, 0], [0, 0], [1, 0]])
 
@@ -432,7 +434,7 @@ def elastic_tile_mesh_3d(
   dy = x[1, :, 1:, :] - x[1, :, :-1, :]
   fy = dy - cy[1, :, :-1, :]
   f = jnp.concatenate([zeros, fy[None, ...], zeros], axis=0)
-  f = jnp.nan_to_num(f)
+  f = jnp.nan_to_num(f, posinf=0.0, neginf=0.0)
   f_tot += jnp.pad(f, [[0, 0], [0, 0], [0, 1], [0, 0]])
   f_tot -= jnp.pad(f, [[0, 0], [0, 0], [1, 0], [0, 0]])
 
@@ -441,7 +443,7 @@ def elastic_tile_mesh_3d(
   dx = x[0, :, 1:, :] - x[0, :, :-1, :]
   fx = dx - cy[0, :, :-1, :]
   f = jnp.concatenate([fx[None, ...], zeros, zeros], axis=0)
-  f = jnp.nan_to_num(f)
+  f = jnp.nan_to_num(f, posinf=0.0, neginf=0.0)
   f_tot += jnp.pad(f, [[0, 0], [0, 0], [0, 1], [0, 0]])
   f_tot -= jnp.pad(f, [[0, 0], [0, 0], [1, 0], [0, 0]])
 
@@ -450,7 +452,7 @@ def elastic_tile_mesh_3d(
   dy = x[1, :, :, 1:] - x[1, :, :, :-1]
   fy = dy - cx[1, :, :, :-1]
   f = jnp.concatenate([zeros, fy[None, ...], zeros], axis=0)
-  f = jnp.nan_to_num(f)
+  f = jnp.nan_to_num(f, posinf=0.0, neginf=0.0)
   f_tot += jnp.pad(f, [[0, 0], [0, 0], [0, 0], [0, 1]])
   f_tot -= jnp.pad(f, [[0, 0], [0, 0], [0, 0], [1, 0]])
 
@@ -459,7 +461,7 @@ def elastic_tile_mesh_3d(
   dz = x[2, :, :, 1:] - x[2, :, :, :-1]
   fz = dz - cx[2, :, :, :-1]
   f = jnp.concatenate([zeros, zeros, fz[None, ...]], axis=0)
-  f = jnp.nan_to_num(f)
+  f = jnp.nan_to_num(f, posinf=0.0, neginf=0.0)
   f_tot += jnp.pad(f, [[0, 0], [0, 0], [0, 0], [0, 1]])
   f_tot -= jnp.pad(f, [[0, 0], [0, 0], [0, 0], [1, 0]])
 
@@ -467,7 +469,7 @@ def elastic_tile_mesh_3d(
   dz = x[2, :, 1:, :] - x[2, :, :-1, :]
   fz = dz - cy[2, :, :-1, :]
   f = jnp.concatenate([zeros, zeros, fz[None, ...]], axis=0)
-  f = jnp.nan_to_num(f)
+  f = jnp.nan_to_num(f, posinf=0.0, neginf=0.0)
   f_tot += jnp.pad(f, [[0, 0], [0, 0], [0, 1], [0, 0]])
   f_tot -= jnp.pad(f, [[0, 0], [0, 0], [1, 0], [0, 0]])
   return f_tot
