@@ -115,7 +115,7 @@ def compute_coarse_offsets(
   Args:
     yx_shape: vertical and horizontal number of tiles
     tile_map: maps (x, y) tile coordinate to the tile image
-    overlaps_xy: pair of two overlap sequences to try, for NN tiles in the X and
+    overlaps_xy: a pair of overlap sequences to try, for NN tiles in the X and
       Y direction, respectively; these overlaps define the number of pixels in
       the given dimension used to compute the offset vector
     min_range: regions with dynamic range smaller than this value will be masked
