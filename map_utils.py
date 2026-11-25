@@ -55,8 +55,9 @@ TODO(mjanusz): Clean up stride format.
 import collections
 import functools as ft
 import itertools
+import math
 import operator
-from typing import Sequence
+from typing import Any, Sequence
 from connectomics.common import bounding_box
 import jax
 import jax.numpy as jnp
@@ -227,6 +228,20 @@ def to_relative(
   return coord_map
 
 
+def _boundary_valid_mask(valid: np.ndarray) -> np.ndarray:
+  """Returns valid grid nodes not strictly surrounded by 3^d valid neighbors."""
+  if any(s < 3 for s in valid.shape):
+    return valid
+  shifts = (slice(None, -2), slice(1, -1), slice(2, None))
+  strictly_interior = ft.reduce(
+      operator.and_,
+      (valid[idx] for idx in itertools.product(shifts, repeat=valid.ndim)),
+  )
+  boundary = valid.copy()
+  boundary[(slice(1, -1),) * valid.ndim] &= ~strictly_interior
+  return boundary
+
+
 def fill_missing(
     coord_map: np.ndarray,
     *,
@@ -311,11 +326,12 @@ def fill_missing(
 
     if interpolate_first:
       q_coords = _get_query_coords()
-      points = tuple(q[valid] for q in q_coords[::-1])  # xy[z]
+      src_mask = _boundary_valid_mask(valid) if dim == 2 else valid
+      points = tuple(q[src_mask] for q in q_coords[::-1])  # xy[z]
       missing_points = tuple(q[missing] for q in q_coords[::-1])  # xy[z]
       try:
         intp = _interpolate_points(
-            points, missing_points, *[c[valid] for c in curr_map]
+            points, missing_points, *[c[src_mask] for c in curr_map]
         )
         for i, update in enumerate(intp):
           ret[i, missing] = update
@@ -431,392 +447,432 @@ def inner_box(
   )
 
 
-@ft.partial(jax.jit, static_argnames=('hd', 'wd'))
-def _invert_2d_newton_jit(
-    u_rel: jax.Array,
-    v_rel: jax.Array,
-    off_x: float,
-    off_y: float,
-    hd: int,
-    wd: int,
-) -> tuple[jax.Array, jax.Array]:
-  """Runs 6 float32 clamped bilinear Newton steps for 2D map inversion."""
-  hs, ws = u_rel.shape
-  max_x = float(ws - 1)
-  max_y = float(hs - 1)
-  qx = jnp.arange(wd, dtype=jnp.float32)[None, :]
-  qy = jnp.arange(hd, dtype=jnp.float32)[:, None]
-  ix = jnp.clip(
-      jnp.broadcast_to(qx - off_x - jnp.mean(u_rel), (hd, wd)), 0.0, max_x
+def _det_matrix(mat: Sequence[Sequence[Any]]) -> Any:
+  """Computes the determinant of a small square matrix of arrays."""
+  n = len(mat)
+  if n == 1:
+    return mat[0][0]
+  if n == 2:
+    return mat[0][0] * mat[1][1] - mat[0][1] * mat[1][0]
+  acc = None
+  for col in range(n):
+    minor = [[row[c] for c in range(n) if c != col] for row in mat[1:]]
+    term = mat[0][col] * _det_matrix(minor)
+    acc = term if acc is None else (acc + term if col % 2 == 0 else acc - term)
+  assert acc is not None
+  return acc
+
+
+def _cofactor_matrix(mat: Sequence[Sequence[Any]]) -> list[list[Any]]:
+  """Computes cofactor matrix C[r][c] = (-1)^(r+c) det(minor(mat, r, c))."""
+  n = len(mat)
+  cof = []
+  for r in range(n):
+    row_cof = []
+    for c in range(n):
+      minor = [
+          [row[cc] for cc in range(n) if cc != c]
+          for rr, row in enumerate(mat)
+          if rr != r
+      ]
+      val = _det_matrix(minor)
+      row_cof.append(val if (r + c) % 2 == 0 else -val)
+    cof.append(row_cof)
+  return cof
+
+
+def _eval_channel_val_and_grad(
+    corners: list[Any],
+    t_axes: Sequence[Any],
+) -> tuple[Any, list[Any]]:
+  """Contracts 2^d corner arrays for one channel into (val, [d/dc_0, ...])."""
+  vals = corners
+  derivs: list[list[Any]] = []
+  for a in range(len(t_axes) - 1, -1, -1):
+    t = t_axes[a]
+    omt = 1.0 - t
+    derivs = [
+        [omt * lo + t * hi for lo, hi in zip(d[0::2], d[1::2])] for d in derivs
+    ]
+    derivs.insert(0, [hi - lo for lo, hi in zip(vals[0::2], vals[1::2])])
+    vals = [omt * lo + t * hi for lo, hi in zip(vals[0::2], vals[1::2])]
+  return vals[0], [d[0] for d in derivs]
+
+
+def _lin_strides_and_offsets(
+    src_spatial: tuple[int, ...],
+) -> tuple[list[int], list[int]]:
+  """Returns row-major linear strides and 2^d cell corner offsets."""
+  dim = len(src_spatial)
+  strides = [1] * dim
+  for a in range(dim - 2, -1, -1):
+    strides[a] = strides[a + 1] * src_spatial[a + 1]
+  offsets = [
+      sum(bit * strides[a] for a, bit in enumerate(bits))
+      for bits in itertools.product((0, 1), repeat=dim)
+  ]
+  return strides, offsets
+
+
+def _newton_step_flat(
+    xp: Any,
+    curr_c: Sequence[Any],
+    u_flats: Sequence[Any],
+    off_axes: Any,
+    q_axes: Sequence[Any],
+    src_spatial: tuple[int, ...],
+    lin_strides: Sequence[int],
+    corner_offsets: Sequence[int],
+    idx_dtype: Any,
+    val_dtype: Any,
+    det_tol: float,
+) -> tuple[list[Any], list[Any]]:
+  """Computes residuals and unclamped Newton update via 1D flat-offset gathers."""
+  dim = len(curr_c)
+  k_axes = [
+      xp.clip(xp.floor(curr_c[a]).astype(idx_dtype), 0, src_spatial[a] - 2)
+      for a in range(dim)
+  ]
+  t_axes = [
+      curr_c[a] - (k_axes[a].astype(val_dtype) if xp is jnp else k_axes[a])
+      for a in range(dim)
+  ]
+  base = k_axes[0] * lin_strides[0]
+  for a in range(1, dim):
+    term = k_axes[a] if lin_strides[a] == 1 else k_axes[a] * lin_strides[a]
+    base = base + term
+  c_idxs = [base if off == 0 else base + off for off in corner_offsets]
+  res_list = []
+  j_mat = []
+  for r in range(dim):
+    du_r, grad_r = _eval_channel_val_and_grad(
+        [u_flats[r][idx] for idx in c_idxs], t_axes
+    )
+    res_list.append((curr_c[r] + off_axes[r] + du_r) - q_axes[r])
+    j_mat.append([(1.0 if r == c else 0.0) + grad_r[c] for c in range(dim)])
+  cof = _cofactor_matrix(j_mat)
+  det = j_mat[0][0] * cof[0][0]
+  for c in range(1, dim):
+    det = det + j_mat[0][c] * cof[0][c]
+  safe_det = xp.where(det != 0, det, 1.0)
+  inv_det = xp.where(xp.abs(det) > det_tol, 1.0 / safe_det, 0.0)
+  nxt_raw = []
+  for col in range(dim):
+    num = cof[0][col] * res_list[0]
+    for r in range(1, dim):
+      num = num + cof[r][col] * res_list[r]
+    nxt_raw.append(curr_c[col] - num * inv_det)
+  return res_list, nxt_raw
+
+
+@ft.partial(jax.jit, static_argnames=('src_spatial', 'dst_spatial'))
+def _invert_newton_jit(
+    u_flats: tuple[jax.Array, ...],
+    off_axes: jax.Array,
+    src_spatial: tuple[int, ...],
+    dst_spatial: tuple[int, ...],
+) -> tuple[jax.Array, ...]:
+  """Runs 6 float32 clamped multilinear Newton steps for map inversion."""
+  dim = len(src_spatial)
+  lin_strides, corner_offsets = _lin_strides_and_offsets(src_spatial)
+  q_axes = [
+      jnp.arange(d, dtype=jnp.float32).reshape(
+          (1,) * a + (d,) + (1,) * (dim - 1 - a)
+      )
+      for a, d in enumerate(dst_spatial)
+  ]
+  c_axes = [
+      jnp.clip(
+          jnp.broadcast_to(
+              q_axes[a] - off_axes[a] - jnp.mean(u_flats[a]), dst_spatial
+          ),
+          0.0,
+          float(src_spatial[a] - 1),
+      )
+      for a in range(dim)
+  ]
+  base0 = (
+      jnp.clip(jnp.rint(c_axes[0]).astype(jnp.int32), 0, src_spatial[0] - 1)
+      * lin_strides[0]
   )
-  iy = jnp.clip(
-      jnp.broadcast_to(qy - off_y - jnp.mean(v_rel), (hd, wd)), 0.0, max_y
-  )
-  ix0_w = jnp.clip(jnp.rint(ix).astype(jnp.int32), 0, ws - 1)
-  iy0_w = jnp.clip(jnp.rint(iy).astype(jnp.int32), 0, hs - 1)
-  ix = jnp.clip(qx - off_x - u_rel[iy0_w, ix0_w], 0.0, max_x)
-  iy = jnp.clip(qy - off_y - v_rel[iy0_w, ix0_w], 0.0, max_y)
+  for a in range(1, dim):
+    ka = jnp.clip(jnp.rint(c_axes[a]).astype(jnp.int32), 0, src_spatial[a] - 1)
+    base0 = base0 + (ka if lin_strides[a] == 1 else ka * lin_strides[a])
+  c_axes = [
+      jnp.clip(
+          q_axes[a] - off_axes[a] - u_flats[a][base0],
+          0.0,
+          float(src_spatial[a] - 1),
+      )
+      for a in range(dim)
+  ]
 
   def _step(carry, _):
-    cx, cy = carry
-    kx = jnp.clip(jnp.floor(cx).astype(jnp.int32), 0, ws - 2)
-    ky = jnp.clip(jnp.floor(cy).astype(jnp.int32), 0, hs - 2)
-    tx = cx - kx.astype(jnp.float32)
-    ty = cy - ky.astype(jnp.float32)
-    omx = 1.0 - tx
-    omy = 1.0 - ty
-
-    u00 = u_rel[ky, kx]
-    u10 = u_rel[ky, kx + 1]
-    u01 = u_rel[ky + 1, kx]
-    u11 = u_rel[ky + 1, kx + 1]
-    v00 = v_rel[ky, kx]
-    v10 = v_rel[ky, kx + 1]
-    v01 = v_rel[ky + 1, kx]
-    v11 = v_rel[ky + 1, kx + 1]
-
-    du = omy * (omx * u00 + tx * u10) + ty * (omx * u01 + tx * u11)
-    dv = omy * (omx * v00 + tx * v10) + ty * (omx * v01 + tx * v11)
-    ru = (cx + off_x + du) - qx
-    rv = (cy + off_y + dv) - qy
-
-    jxx = 1.0 + omy * (u10 - u00) + ty * (u11 - u01)
-    jxy = omx * (u01 - u00) + tx * (u11 - u10)
-    jyx = omy * (v10 - v00) + ty * (v11 - v01)
-    jyy = 1.0 + omx * (v01 - v00) + tx * (v11 - v10)
-    det = jxx * jyy - jxy * jyx
-    inv_det = jnp.where(jnp.abs(det) > 1e-6, 1.0 / det, 0.0)
-    step_x = (jyy * ru - jxy * rv) * inv_det
-    step_y = (-jyx * ru + jxx * rv) * inv_det
-    nx = jnp.clip(cx - step_x, 0.0, max_x)
-    ny = jnp.clip(cy - step_y, 0.0, max_y)
-    return (nx, ny), None
-
-  (ix, iy), _ = jax.lax.scan(_step, (ix, iy), None, length=6)
-  return ix, iy
-
-
-def _invert_2d_dense_newton(
-    dx_s: np.ndarray,
-    dy_s: np.ndarray,
-    off_x: float,
-    off_y: float,
-    sx: float,
-    sy: float,
-    hd: int,
-    wd: int,
-) -> tuple[np.ndarray, np.ndarray] | None:
-  """Inverts a dense 2D relative map slice via Newton-Raphson if injective."""
-  hs, ws = dx_s.shape
-  if hs < 2 or ws < 2 or hd < 1 or wd < 1:
-    return None
-  if not (np.all(np.isfinite(dx_s)) and np.all(np.isfinite(dy_s))):
-    return None
-
-  u_rel = dx_s / sx
-  v_rel = dy_s / sy
-  ux0 = u_rel[:-1, 1:] - u_rel[:-1, :-1]
-  ux1 = u_rel[1:, 1:] - u_rel[1:, :-1]
-  uy0 = u_rel[1:, :-1] - u_rel[:-1, :-1]
-  uy1 = u_rel[1:, 1:] - u_rel[:-1, 1:]
-  vx0 = v_rel[:-1, 1:] - v_rel[:-1, :-1]
-  vx1 = v_rel[1:, 1:] - v_rel[1:, :-1]
-  vy0 = v_rel[1:, :-1] - v_rel[:-1, :-1]
-  vy1 = v_rel[1:, 1:] - v_rel[:-1, 1:]
-
-  # Exact Gale-Nikaido P-matrix check across all 4 cell corners.
-  jxx0, jxx1 = 1.0 + ux0, 1.0 + ux1
-  jyy0, jyy1 = 1.0 + vy0, 1.0 + vy1
-  if (
-      np.min(jxx0) <= 0.05
-      or np.min(jxx1) <= 0.05
-      or np.min(jyy0) <= 0.05
-      or np.min(jyy1) <= 0.05
-      or np.min(jxx0 * jyy0 - uy0 * vx0) <= 0.05
-      or np.min(jxx0 * jyy1 - uy1 * vx0) <= 0.05
-      or np.min(jxx1 * jyy0 - uy0 * vx1) <= 0.05
-      or np.min(jxx1 * jyy1 - uy1 * vx1) <= 0.05
-  ):
-    return None
-
-  max_x = float(ws - 1)
-  max_y = float(hs - 1)
-  qx = np.arange(wd, dtype=np.float64)[None, :]
-  qy = np.arange(hd, dtype=np.float64)[:, None]
-
-  if hd * wd >= 16384:
-    ix_dev, iy_dev = _invert_2d_newton_jit(
-        jnp.asarray(u_rel, dtype=jnp.float32),
-        jnp.asarray(v_rel, dtype=jnp.float32),
-        off_x,
-        off_y,
-        hd,
-        wd,
+    _, nxt_raw = _newton_step_flat(
+        jnp,
+        carry,
+        u_flats,
+        off_axes,
+        q_axes,
+        src_spatial,
+        lin_strides,
+        corner_offsets,
+        jnp.int32,
+        jnp.float32,
+        1e-6,
     )
-    ix = np.clip(np.asarray(ix_dev, dtype=np.float64), 0.0, max_x)
-    iy = np.clip(np.asarray(iy_dev, dtype=np.float64), 0.0, max_y)
+    nxt = tuple(
+        jnp.clip(nxt_raw[a], 0.0, float(src_spatial[a] - 1)).astype(
+            jnp.float32
+        )
+        for a in range(dim)
+    )
+    return nxt, None
+
+  final_c, _ = jax.lax.scan(_step, tuple(c_axes), None, length=6)
+  return final_c
+
+
+def _invert_dense_newton(
+    sub_map: np.ndarray,
+    off_xyz: Sequence[float],
+    stride: Sequence[float],
+    dst_spatial: tuple[int, ...],
+) -> np.ndarray | None:
+  """Inverts a dense relative map via multilinear Newton-Raphson if injective."""
+  dim = sub_map.shape[0]
+  src_spatial = sub_map.shape[1:]
+  if any(s < 2 for s in src_spatial) or any(d < 1 for d in dst_spatial):
+    return None
+  if not np.all(np.isfinite(sub_map)):
+    return None
+
+  # Spatial axis order ([z, ]y, x) matches stride, src_spatial, and dst_spatial.
+  u_axes = [
+      np.ascontiguousarray(sub_map[dim - 1 - a] / float(stride[a]))
+      for a in range(dim)
+  ]
+  off_axes = [float(off_xyz[dim - 1 - a]) for a in range(dim)]
+
+  # Gale-Nikaido P-matrix check across all 2^dim cell corners.
+  edge_diffs = [
+      [np.diff(u_axes[r], axis=c) for c in range(dim)] for r in range(dim)
+  ]
+  if any(1.0 + float(np.min(edge_diffs[a][a])) <= 0.05 for a in range(dim)):
+    return None
+  corner_opts = (slice(None, -1), slice(1, None))
+  principal_subsets = list(
+      itertools.chain.from_iterable(
+          itertools.combinations(range(dim), k) for k in range(2, dim + 1)
+      )
+  )
+  for corner in itertools.product((0, 1), repeat=dim):
+    col_slices = [
+        tuple(
+            slice(None) if a == c else corner_opts[corner[a]]
+            for a in range(dim)
+        )
+        for c in range(dim)
+    ]
+    for sub in principal_subsets:
+      sub_mat = [
+          [
+              (1.0 if r == c else 0.0) + edge_diffs[r][c][col_slices[c]]
+              for c in sub
+          ]
+          for r in sub
+      ]
+      if np.min(_det_matrix(sub_mat)) <= 0.05:
+        return None
+
+  lin_strides, corner_offsets = _lin_strides_and_offsets(src_spatial)
+  u_flats = [u.ravel() for u in u_axes]
+  q_axes = [
+      np.arange(d, dtype=np.float64).reshape(
+          (1,) * a + (d,) + (1,) * (dim - 1 - a)
+      )
+      for a, d in enumerate(dst_spatial)
+  ]
+  max_coords = [float(s - 1) for s in src_spatial]
+
+  if math.prod(dst_spatial) >= (16384 << (2 * (dim - 2))):
+    c_dev = _invert_newton_jit(
+        tuple(jnp.asarray(uf, dtype=jnp.float32) for uf in u_flats),
+        jnp.asarray(off_axes, dtype=jnp.float32),
+        src_spatial,
+        dst_spatial,
+    )
+    c_axes = [
+        np.clip(np.asarray(c_dev[a], dtype=np.float64), 0.0, max_coords[a])
+        for a in range(dim)
+    ]
     n_iters = 4
   else:
-    ix = np.clip(
-        np.broadcast_to(qx - off_x - float(np.mean(u_rel)), (hd, wd)),
-        0.0,
-        max_x,
+    c_axes = [
+        np.clip(
+            np.broadcast_to(
+                q_axes[a] - off_axes[a] - float(np.mean(u_axes[a])),
+                dst_spatial,
+            ),
+            0.0,
+            max_coords[a],
+        )
+        for a in range(dim)
+    ]
+    base0 = (
+        np.clip(np.rint(c_axes[0]).astype(np.intp), 0, src_spatial[0] - 1)
+        * lin_strides[0]
     )
-    iy = np.clip(
-        np.broadcast_to(qy - off_y - float(np.mean(v_rel)), (hd, wd)),
-        0.0,
-        max_y,
-    )
-    ix0_w = np.clip(np.rint(ix).astype(np.intp), 0, ws - 1)
-    iy0_w = np.clip(np.rint(iy).astype(np.intp), 0, hs - 1)
-    ix = np.clip(qx - off_x - u_rel[iy0_w, ix0_w], 0.0, max_x)
-    iy = np.clip(qy - off_y - v_rel[iy0_w, ix0_w], 0.0, max_y)
-    n_iters = 8
-
-  def _eval_2d(
-      cx: np.ndarray, cy: np.ndarray
-  ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    kx = np.clip(np.floor(cx).astype(np.intp), 0, ws - 2)
-    ky = np.clip(np.floor(cy).astype(np.intp), 0, hs - 2)
-    tx = cx - kx
-    ty = cy - ky
-    omx = 1.0 - tx
-    omy = 1.0 - ty
-
-    u00 = u_rel[ky, kx]
-    u10 = u_rel[ky, kx + 1]
-    u01 = u_rel[ky + 1, kx]
-    u11 = u_rel[ky + 1, kx + 1]
-    v00 = v_rel[ky, kx]
-    v10 = v_rel[ky, kx + 1]
-    v01 = v_rel[ky + 1, kx]
-    v11 = v_rel[ky + 1, kx + 1]
-
-    du = omy * (omx * u00 + tx * u10) + ty * (omx * u01 + tx * u11)
-    dv = omy * (omx * v00 + tx * v10) + ty * (omx * v01 + tx * v11)
-    ru = (cx + off_x + du) - qx
-    rv = (cy + off_y + dv) - qy
-
-    jxx = 1.0 + omy * (u10 - u00) + ty * (u11 - u01)
-    jxy = omx * (u01 - u00) + tx * (u11 - u10)
-    jyx = omy * (v10 - v00) + ty * (v11 - v01)
-    jyy = 1.0 + omx * (v01 - v00) + tx * (v11 - v10)
-    det = jxx * jyy - jxy * jyx
-    safe_det = np.where(det != 0, det, 1.0)
-    inv_det = np.where(np.abs(det) > 1e-12, 1.0 / safe_det, 0.0)
-    nx_raw = cx - (jyy * ru - jxy * rv) * inv_det
-    ny_raw = cy - (-jyx * ru + jxx * rv) * inv_det
-    return ru, rv, nx_raw, ny_raw
+    for a in range(1, dim):
+      ka = np.clip(np.rint(c_axes[a]).astype(np.intp), 0, src_spatial[a] - 1)
+      base0 = base0 + (ka if lin_strides[a] == 1 else ka * lin_strides[a])
+    c_axes = [
+        np.clip(q_axes[a] - off_axes[a] - u_flats[a][base0], 0.0, max_coords[a])
+        for a in range(dim)
+    ]
+    n_iters = 9
 
   for _ in range(n_iters):
-    _, _, nx_raw, ny_raw = _eval_2d(ix, iy)
-    nx = np.clip(nx_raw, 0.0, max_x)
-    ny = np.clip(ny_raw, 0.0, max_y)
-    max_delta = max(
-        float(np.max(np.abs(nx - ix))), float(np.max(np.abs(ny - iy)))
+    _, nxt_raw = _newton_step_flat(
+        np,
+        c_axes,
+        u_flats,
+        off_axes,
+        q_axes,
+        src_spatial,
+        lin_strides,
+        corner_offsets,
+        np.intp,
+        np.float64,
+        1e-12,
     )
-    ix, iy = nx, ny
+    nxt = [np.clip(nxt_raw[a], 0.0, max_coords[a]) for a in range(dim)]
+    max_delta = max(
+        float(np.max(np.abs(nxt[a] - c_axes[a]))) for a in range(dim)
+    )
+    c_axes = nxt
     if max_delta < 1e-12:
       break
 
-  ru, rv, nx_raw, ny_raw = _eval_2d(ix, iy)
-  res = np.maximum(np.abs(ru), np.abs(rv))
-  interior = (ix > 0.0) & (ix < max_x) & (iy > 0.0) & (iy < max_y)
-  inward = (nx_raw > 0.0) & (nx_raw < max_x) & (ny_raw > 0.0) & (ny_raw < max_y)
-  if np.any((interior | inward) & (res > 1e-8)):
-    return None
-
-  out_u = np.where(res <= 1e-8, ((ix + off_x) - qx) * sx, np.nan)
-  out_v = np.where(res <= 1e-8, ((iy + off_y) - qy) * sy, np.nan)
-  return out_u, out_v
-
-
-def _invert_3d_dense_newton(
-    rel_map: np.ndarray,
-    off_xyz: tuple[float, float, float],
-    stride_zyx: Sequence[float],
-    dst_zyx: tuple[int, int, int],
-) -> np.ndarray | None:
-  """Inverts a dense 3D relative map via trilinear Newton-Raphson."""
-  _, zs, hs, ws = rel_map.shape
-  zd, hd, wd = dst_zyx
-  if zs < 2 or hs < 2 or ws < 2 or zd < 1 or hd < 1 or wd < 1:
-    return None
-  if not np.all(np.isfinite(rel_map)):
-    return None
-
-  sz, sy, sx = float(stride_zyx[0]), float(stride_zyx[1]), float(stride_zyx[2])
-  off_x, off_y, off_z = off_xyz
-  u_rel = rel_map[0] / sx
-  v_rel = rel_map[1] / sy
-  w_rel = rel_map[2] / sz
-
-  # Verify P-matrix positive principal minors across all 8 cell corners.
-  for cz in (slice(0, zs - 1), slice(1, zs)):
-    for cy in (slice(0, hs - 1), slice(1, hs)):
-      ux = u_rel[cz, cy, 1:] - u_rel[cz, cy, :-1]
-      vx = v_rel[cz, cy, 1:] - v_rel[cz, cy, :-1]
-      wx = w_rel[cz, cy, 1:] - w_rel[cz, cy, :-1]
-      for cx in (slice(0, ws - 1), slice(1, ws)):
-        uy = u_rel[cz, 1:, cx] - u_rel[cz, :-1, cx]
-        vy = v_rel[cz, 1:, cx] - v_rel[cz, :-1, cx]
-        wy = w_rel[cz, 1:, cx] - w_rel[cz, :-1, cx]
-        uz = u_rel[1:, cy, cx] - u_rel[:-1, cy, cx]
-        vz = v_rel[1:, cy, cx] - v_rel[:-1, cy, cx]
-        wz = w_rel[1:, cy, cx] - w_rel[:-1, cy, cx]
-        jxx = 1.0 + ux
-        jyy = 1.0 + vy
-        jzz = 1.0 + wz
-        m_xy = jxx * jyy - uy * vx
-        m_xz = jxx * jzz - uz * wx
-        m_yz = jyy * jzz - vz * wy
-        det3 = (
-            jxx * (jyy * jzz - vz * wy)
-            - uy * (vx * jzz - vz * wx)
-            + uz * (vx * wy - jyy * wx)
-        )
-        if (
-            np.min(jxx) <= 0.05
-            or np.min(jyy) <= 0.05
-            or np.min(jzz) <= 0.05
-            or np.min(m_xy) <= 0.05
-            or np.min(m_xz) <= 0.05
-            or np.min(m_yz) <= 0.05
-            or np.min(det3) <= 0.05
-        ):
-          return None
-
-  max_x, max_y, max_z = float(ws - 1), float(hs - 1), float(zs - 1)
-  qx = np.arange(wd, dtype=np.float64)[None, None, :]
-  qy = np.arange(hd, dtype=np.float64)[None, :, None]
-  qz = np.arange(zd, dtype=np.float64)[:, None, None]
-
-  ix = np.clip(
-      np.broadcast_to(qx - off_x - float(np.mean(u_rel)), (zd, hd, wd)),
-      0.0,
-      max_x,
+  res_list, nxt_raw = _newton_step_flat(
+      np,
+      c_axes,
+      u_flats,
+      off_axes,
+      q_axes,
+      src_spatial,
+      lin_strides,
+      corner_offsets,
+      np.intp,
+      np.float64,
+      1e-12,
   )
-  iy = np.clip(
-      np.broadcast_to(qy - off_y - float(np.mean(v_rel)), (zd, hd, wd)),
-      0.0,
-      max_y,
+  res = ft.reduce(np.maximum, (np.abs(r) for r in res_list))
+  interior = ft.reduce(
+      operator.and_,
+      ((c_axes[a] > 0.0) & (c_axes[a] < max_coords[a]) for a in range(dim)),
   )
-  iz = np.clip(
-      np.broadcast_to(qz - off_z - float(np.mean(w_rel)), (zd, hd, wd)),
-      0.0,
-      max_z,
-  )
-  kx0 = np.clip(np.rint(ix).astype(np.intp), 0, ws - 1)
-  ky0 = np.clip(np.rint(iy).astype(np.intp), 0, hs - 1)
-  kz0 = np.clip(np.rint(iz).astype(np.intp), 0, zs - 1)
-  ix = np.clip(qx - off_x - u_rel[kz0, ky0, kx0], 0.0, max_x)
-  iy = np.clip(qy - off_y - v_rel[kz0, ky0, kx0], 0.0, max_y)
-  iz = np.clip(qz - off_z - w_rel[kz0, ky0, kx0], 0.0, max_z)
-
-  def _eval_trilin(arr, kz, ky, kx, tz, ty, tx):
-    omz, omy, omx = 1.0 - tz, 1.0 - ty, 1.0 - tx
-    c000 = arr[kz, ky, kx]
-    c001 = arr[kz, ky, kx + 1]
-    c010 = arr[kz, ky + 1, kx]
-    c011 = arr[kz, ky + 1, kx + 1]
-    c100 = arr[kz + 1, ky, kx]
-    c101 = arr[kz + 1, ky, kx + 1]
-    c110 = arr[kz + 1, ky + 1, kx]
-    c111 = arr[kz + 1, ky + 1, kx + 1]
-    c00 = omx * c000 + tx * c001
-    c01 = omx * c010 + tx * c011
-    c10 = omx * c100 + tx * c101
-    c11 = omx * c110 + tx * c111
-    c0 = omy * c00 + ty * c01
-    c1 = omy * c10 + ty * c11
-    val = omz * c0 + tz * c1
-    dx = omz * (omy * (c001 - c000) + ty * (c011 - c010)) + tz * (
-        omy * (c101 - c100) + ty * (c111 - c110)
-    )
-    dy = omz * (c01 - c00) + tz * (c11 - c10)
-    dz = c1 - c0
-    return val, dx, dy, dz
-
-  def _step_3d(cx: np.ndarray, cy: np.ndarray, cz: np.ndarray) -> tuple[
-      np.ndarray,
-      np.ndarray,
-      np.ndarray,
-      np.ndarray,
-      np.ndarray,
-      np.ndarray,
-  ]:
-    kx = np.clip(np.floor(cx).astype(np.intp), 0, ws - 2)
-    ky = np.clip(np.floor(cy).astype(np.intp), 0, hs - 2)
-    kz = np.clip(np.floor(cz).astype(np.intp), 0, zs - 2)
-    tx, ty, tz = cx - kx, cy - ky, cz - kz
-    du, ux, uy, uz = _eval_trilin(u_rel, kz, ky, kx, tz, ty, tx)
-    dv, vx, vy, vz = _eval_trilin(v_rel, kz, ky, kx, tz, ty, tx)
-    dw, wx, wy, wz = _eval_trilin(w_rel, kz, ky, kx, tz, ty, tx)
-    ru = (cx + off_x + du) - qx
-    rv = (cy + off_y + dv) - qy
-    rw = (cz + off_z + dw) - qz
-    jxx, jxy, jxz = 1.0 + ux, uy, uz
-    jyx, jyy, jyz = vx, 1.0 + vy, vz
-    jzx, jzy, jzz = wx, wy, 1.0 + wz
-    c00 = jyy * jzz - jyz * jzy
-    c01 = -(jyx * jzz - jyz * jzx)
-    c02 = jyx * jzy - jyy * jzx
-    c10 = -(jxy * jzz - jxz * jzy)
-    c11 = jxx * jzz - jxz * jzx
-    c12 = -(jxx * jzy - jxy * jzx)
-    c20 = jxy * jyz - jxz * jyy
-    c21 = -(jxx * jyz - jxz * jyx)
-    c22 = jxx * jyy - jxy * jyx
-    det = jxx * c00 + jxy * c01 + jxz * c02
-    inv_det = np.where(
-        np.abs(det) > 1e-12, 1.0 / np.where(det != 0, det, 1.0), 0.0
-    )
-    nx_raw = cx - (c00 * ru + c10 * rv + c20 * rw) * inv_det
-    ny_raw = cy - (c01 * ru + c11 * rv + c21 * rw) * inv_det
-    nz_raw = cz - (c02 * ru + c12 * rv + c22 * rw) * inv_det
-    return ru, rv, rw, nx_raw, ny_raw, nz_raw
-
-  for _ in range(9):
-    _, _, _, nx_raw, ny_raw, nz_raw = _step_3d(ix, iy, iz)
-    nx = np.clip(nx_raw, 0.0, max_x)
-    ny = np.clip(ny_raw, 0.0, max_y)
-    nz = np.clip(nz_raw, 0.0, max_z)
-    max_delta = max(
-        float(np.max(np.abs(nx - ix))),
-        float(np.max(np.abs(ny - iy))),
-        float(np.max(np.abs(nz - iz))),
-    )
-    ix, iy, iz = nx, ny, nz
-    if max_delta < 1e-12:
-      break
-
-  ru, rv, rw, nx_raw, ny_raw, nz_raw = _step_3d(ix, iy, iz)
-  res = np.maximum(np.maximum(np.abs(ru), np.abs(rv)), np.abs(rw))
-  interior = (
-      (ix > 0.0)
-      & (ix < max_x)
-      & (iy > 0.0)
-      & (iy < max_y)
-      & (iz > 0.0)
-      & (iz < max_z)
-  )
-  inward = (
-      (nx_raw > 0.0)
-      & (nx_raw < max_x)
-      & (ny_raw > 0.0)
-      & (ny_raw < max_y)
-      & (nz_raw > 0.0)
-      & (nz_raw < max_z)
+  inward = ft.reduce(
+      operator.and_,
+      ((nxt_raw[a] > 0.0) & (nxt_raw[a] < max_coords[a]) for a in range(dim)),
   )
   if np.any((interior | inward) & (res > 1e-8)):
     return None
 
-  ret = np.full((3, zd, hd, wd), np.nan, dtype=np.float64)
   valid_out = res <= 1e-8
-  ret[0] = np.where(valid_out, ((ix + off_x) - qx) * sx, np.nan)
-  ret[1] = np.where(valid_out, ((iy + off_y) - qy) * sy, np.nan)
-  ret[2] = np.where(valid_out, ((iz + off_z) - qz) * sz, np.nan)
-  return ret
+  out = np.full((dim, *dst_spatial), np.nan, dtype=np.float64)
+  for a in range(dim):
+    ch = dim - 1 - a
+    out[ch] = np.where(
+        valid_out,
+        ((c_axes[a] + off_axes[a]) - q_axes[a]) * float(stride[a]),
+        np.nan,
+    )
+  return out
+
+
+def _invert_partial_newton(
+    sub_map: np.ndarray,
+    off_xyz: Sequence[float],
+    stride: Sequence[float],
+    dst_spatial: tuple[int, ...],
+) -> np.ndarray | None:
+  """Inverts a partial-NaN map via EDT-extended Newton plus boundary Qhull."""
+  dim = sub_map.shape[0]
+  src_spatial = sub_map.shape[1:]
+  if any(s < 2 for s in src_spatial) or any(d < 1 for d in dst_spatial):
+    return None
+  valid_src = np.all(np.isfinite(sub_map), axis=0)
+  if np.all(valid_src) or not np.any(valid_src):
+    return None
+  corner_slices = (slice(None, -1), slice(1, None))
+  valid_cell = ft.reduce(
+      operator.and_,
+      (valid_src[idx] for idx in itertools.product(corner_slices, repeat=dim)),
+  )
+  if not np.any(valid_cell):
+    return None
+
+  edt_idx = ndimage.distance_transform_edt(
+      ~valid_src, return_distances=False, return_indices=True
+  )
+  assert isinstance(edt_idx, np.ndarray)
+  edt_sel = tuple(edt_idx)
+  filled = np.stack([sub_map[c][edt_sel] for c in range(dim)], axis=0)
+  out = _invert_dense_newton(filled, off_xyz, stride, dst_spatial)
+  if out is None:
+    return None
+
+  q_axes = [
+      np.arange(d, dtype=np.float64).reshape(
+          (1,) * a + (d,) + (1,) * (dim - 1 - a)
+      )
+      for a, d in enumerate(dst_spatial)
+  ]
+  finite_out = np.all(np.isfinite(out), axis=0)
+  in_src = finite_out.copy()
+  k_axes = []
+  for a, s in enumerate(src_spatial):
+    ch = dim - 1 - a
+    ia = np.where(
+        finite_out,
+        out[ch] / float(stride[a]) + q_axes[a] - float(off_xyz[ch]),
+        -1.0,
+    )
+    in_src &= (ia >= 0.0) & (ia <= s - 1)
+    k_axes.append(
+        np.clip(np.floor(np.where(in_src, ia, 0.0)).astype(np.intp), 0, s - 2)
+    )
+
+  cell_ok = in_src & valid_cell[tuple(k_axes)]
+  out[:, ~cell_ok] = np.nan
+
+  boundary_src = _boundary_valid_mask(valid_src)
+  b_idx = np.nonzero(boundary_src)
+  b_targets = [
+      b_idx[a].astype(np.float64)
+      + float(off_xyz[dim - 1 - a])
+      + sub_map[(dim - 1 - a, *b_idx)] / float(stride[a])
+      for a in range(dim)
+  ]
+  rem = ~cell_ok
+  for q_a, bt_a in zip(q_axes, b_targets):
+    rem = rem & (q_a >= float(np.min(bt_a))) & (q_a <= float(np.max(bt_a)))
+  if np.any(rem):
+    rem_idx = np.nonzero(rem)
+    try:
+      tri = spatial.Delaunay(
+          np.ascontiguousarray(
+              np.column_stack(b_targets[::-1]), dtype=np.double
+          )
+      )
+      vals = np.column_stack([-sub_map[(ch, *b_idx)] for ch in range(dim)])
+      ip = interpolate.LinearNDInterpolator(tri, vals, fill_value=np.nan)
+      query_pts = tuple(idx.astype(np.float64) for idx in rem_idx[::-1])
+      out[(slice(None), *rem_idx)] = ip(*query_pts).T
+    except spatial.QhullError:
+      pass
+  return out
 
 
 def invert_map(
@@ -842,167 +898,75 @@ def invert_map(
   """
   rel_map = coord_map.astype(np.float64)
   dim = rel_map.shape[0]
+  if dim not in (2, 3):
+    raise NotImplementedError(f'Unsupported coordinate map dim: {dim}')
   stride = _as_vec(stride, dim)
-  off_xyz = (
-      float(src_box.start[0] - dst_box.start[0]),
-      float(src_box.start[1] - dst_box.start[1]),
-      float(src_box.start[2] - dst_box.start[2]),
+  off_xyz = tuple(
+      float(src_box.start[i] - dst_box.start[i]) for i in range(dim)
   )
+  src_spatial = rel_map.shape[-dim:]
+  dst_spatial = tuple(int(s) for s in dst_box.size[:dim][::-1])
+  batch_shape = rel_map.shape[1:-dim]
+  n_batch = math.prod(batch_shape)
 
-  if dim == 3:
-    fast_3d = _invert_3d_dense_newton(
-        rel_map,
-        off_xyz,
-        stride,
-        (int(dst_box.size[2]), int(dst_box.size[1]), int(dst_box.size[0])),
-    )
-    if fast_3d is not None:
-      return fast_3d
+  work = rel_map.reshape((dim, n_batch, *src_spatial))
+  ret = np.full((dim, n_batch, *dst_spatial), np.nan, dtype=np.float64)
+  if n_batch == 0 or any(d == 0 for d in dst_spatial):
+    return ret.reshape((dim, *batch_shape, *dst_spatial))
 
-  if dim == 2:
-    hd, wd = int(dst_box.size[1]), int(dst_box.size[0])
-    sy, sx = float(stride[0]), float(stride[1])
-    ret_fast = np.full((2, rel_map.shape[1], hd, wd), np.nan, dtype=np.float64)
-    fallback_zs: list[int] = []
-    for z in range(rel_map.shape[1]):
-      if not np.any(np.isfinite(rel_map[:, z, ...])):
-        continue
-      fast_z = _invert_2d_dense_newton(
-          rel_map[0, z], rel_map[1, z], off_xyz[0], off_xyz[1], sx, sy, hd, wd
-      )
-      if fast_z is not None:
-        ret_fast[0, z], ret_fast[1, z] = fast_z
-      else:
-        fallback_zs.append(z)
-    if not fallback_zs:
-      return ret_fast
-  else:
-    ret_fast = None
-    fallback_zs = []
+  fallback_bs: list[int] = []
+  for b in range(n_batch):
+    sub = work[:, b]
+    if not np.any(np.all(np.isfinite(sub), axis=0)):
+      continue
+    fast_b = _invert_dense_newton(sub, off_xyz, stride, dst_spatial)
+    if fast_b is None:
+      fast_b = _invert_partial_newton(sub, off_xyz, stride, dst_spatial)
+    if fast_b is not None:
+      ret[:, b] = fast_b
+    else:
+      fallback_bs.append(b)
+
+  if not fallback_bs:
+    return ret.reshape((dim, *batch_shape, *dst_spatial))
 
   # Switch to a coordinate system originating at the first target node
   # of the coordinate map for Delaunay fallback.
   src_box = src_box.adjusted_by(start=-dst_box.start, end=-dst_box.start)  # pyrefly: ignore[bad-argument-type]
   dst_box = dst_box.adjusted_by(start=-dst_box.start, end=-dst_box.start)  # pyrefly: ignore[bad-argument-type]
-  abs_map = to_absolute(rel_map, stride, src_box)
+  abs_map = to_absolute(work[:, fallback_bs], stride, src_box)
 
-  def _sel_size(box):
-    if dim == 2:
-      return np.mgrid[: box.size[1], : box.size[0]]
-    elif dim == 3:
-      return np.mgrid[: box.size[2], : box.size[1], : box.size[0]]
-    else:
-      raise NotImplementedError()
-
-  src_coords = _sel_size(src_box)  # [z]yx
-  for i, src in enumerate(src_coords):
-    src_coords[i] = (src + src_box.start[dim - i - 1]) * stride[i]
-
-  # ([w, ]v, u) points at which the map will be evaluated.
-  query_coords = _sel_size(dst_box)
-  for i, query in enumerate(query_coords):
-    query_coords[i] = (query + dst_box.start[dim - i - 1]) * stride[i]
-
-  query_points = tuple([q.ravel() for q in query_coords[::-1]])  # uv[w]
-
-  if dim == 2:
-    assert ret_fast is not None
-    ret_uv = np.full(
-        (2, len(fallback_zs), dst_box.size[1], dst_box.size[0]),
-        np.nan,
-        dtype=abs_map.dtype,
-    )
-    for out_i, z in enumerate(fallback_zs):
-      valid = np.all(np.isfinite(abs_map[:, z, ...]), axis=0)
-      if not np.any(valid):
-        continue
-      src_points = tuple([c[z][valid] for c in abs_map])
-      try:
-        u, v = _interpolate_points(
-            src_points, query_points, *[s[valid] for s in src_coords[::-1]]
+  def _box_grid(box: bounding_box.BoundingBox) -> list[np.ndarray]:
+    slices = tuple(slice(None, int(s)) for s in box.size[:dim][::-1])
+    return [
+        (c + start) * step
+        for c, start, step in zip(
+            np.mgrid[slices], box.start[:dim][::-1], stride
         )
-        ret_uv[0, out_i, ...] = u.reshape(query_coords[1].shape)
-        ret_uv[1, out_i, ...] = v.reshape(query_coords[0].shape)
-      except spatial.qhull.QhullError:
-        pass
+    ]
 
-    rel_fb = to_relative(ret_uv, stride, dst_box)
-    for out_i, z in enumerate(fallback_zs):
-      ret_fast[:, z, ...] = rel_fb[:, out_i, ...]
-    return ret_fast
+  src_coords = _box_grid(src_box)  # [z, ]y, x
+  query_coords = _box_grid(dst_box)  # [w, ]v, u
+  query_points = tuple(q.ravel() for q in query_coords[::-1])  # u, v[, w]
 
-  assert dim == 3
-
-  ret = np.full(
-      (3, dst_box.size[2], dst_box.size[1], dst_box.size[0]),
-      np.nan,
-      dtype=abs_map.dtype,
+  ret_abs = np.full(
+      (dim, len(fallback_bs), *dst_spatial), np.nan, dtype=abs_map.dtype
   )
-  valid = np.all(np.isfinite(abs_map), axis=0)
-  if not np.any(valid):
-    return ret
+  for out_i in range(len(fallback_bs)):
+    valid = np.all(np.isfinite(abs_map[:, out_i]), axis=0)
+    if not np.any(valid):
+      continue
+    src_points = tuple(c[valid] for c in abs_map[:, out_i])
+    try:
+      intp = _interpolate_points(
+          src_points, query_points, *[s[valid] for s in src_coords[::-1]]
+      )
+      ret_abs[:, out_i] = intp.reshape((dim, *dst_spatial))
+    except spatial.QhullError:
+      pass
 
-  src_points = tuple([c[valid] for c in abs_map])
-  try:
-    u, v, w = _interpolate_points(
-        src_points, query_points, *[s[valid] for s in src_coords[::-1]]
-    )
-    ret[0, ...] = u.reshape(query_coords[2].shape)
-    ret[1, ...] = v.reshape(query_coords[1].shape)
-    ret[2, ...] = w.reshape(query_coords[0].shape)
-  except spatial.qhull.QhullError:
-    pass
-
-  return to_relative(ret, stride, dst_box)
-
-
-@jax.jit
-def _compose_maps_dense_jit(
-    m1: jax.Array,
-    m2: jax.Array,
-    ratio: float,
-    inv_s2: float,
-    off_x: float,
-    off_y: float,
-) -> jax.Array:
-  """JIT-compiled bilinear relative coordinate map composition."""
-  h1, w1 = m1.shape[2], m1.shape[3]
-  h2, w2 = m2.shape[2], m2.shape[3]
-  ix = jnp.arange(w1, dtype=jnp.float32)[jnp.newaxis, jnp.newaxis, :]
-  iy = jnp.arange(h1, dtype=jnp.float32)[jnp.newaxis, :, jnp.newaxis]
-  qx = ix * ratio + off_x + m1[0] * inv_s2
-  qy = iy * ratio + off_y + m1[1] * inv_s2
-  in_b = (
-      jnp.isfinite(qx)
-      & jnp.isfinite(qy)
-      & (qx >= 0.0)
-      & (qx <= float(w2 - 1))
-      & (qy >= 0.0)
-      & (qy <= float(h2 - 1))
-  )
-  qx_c = jnp.clip(jnp.where(in_b, qx, 0.0), 0.0, float(w2 - 1))
-  qy_c = jnp.clip(jnp.where(in_b, qy, 0.0), 0.0, float(h2 - 1))
-  kx = jnp.clip(jnp.floor(qx_c).astype(jnp.int32), 0, w2 - 2)
-  ky = jnp.clip(jnp.floor(qy_c).astype(jnp.int32), 0, h2 - 2)
-  wx1 = qx_c - kx.astype(jnp.float32)
-  wx0 = 1.0 - wx1
-  wy1 = qy_c - ky.astype(jnp.float32)
-  wy0 = 1.0 - wy1
-
-  def _sample_z(m1_z, m2_z, ky_z, kx_z, wy0_z, wy1_z, wx0_z, wx1_z, in_b_z):
-    v00 = m2_z[:, ky_z, kx_z]
-    v01 = m2_z[:, ky_z, kx_z + 1]
-    v10 = m2_z[:, ky_z + 1, kx_z]
-    v11 = m2_z[:, ky_z + 1, kx_z + 1]
-    interp = wy0_z * (wx0_z * v00 + wx1_z * v01) + wy1_z * (
-        wx0_z * v10 + wx1_z * v11
-    )
-    return jnp.where(in_b_z[jnp.newaxis, ...], m1_z + interp, jnp.nan)
-
-  out_z = jax.vmap(_sample_z, in_axes=(1, 1, 0, 0, 0, 0, 0, 0, 0), out_axes=1)(
-      m1, m2, ky, kx, wy0, wy1, wx0, wx1, in_b
-  )
-  return out_z
+  ret[:, fallback_bs] = to_relative(ret_abs, stride, dst_box)
+  return ret.reshape((dim, *batch_shape, *dst_spatial))
 
 
 def resample_map(
@@ -1116,6 +1080,132 @@ def resample_map(
   return ret
 
 
+def _compose_bilinear_coords(
+    xp: Any,
+    m1: Any,
+    h2: int,
+    w2: int,
+    ratio: float,
+    inv_s2: float,
+    off_x: float,
+    off_y: float,
+    val_dtype: Any,
+    idx_dtype: Any,
+) -> tuple[Any, Any, Any, Any, Any, Any, Any]:
+  """Computes clamped target cell indices, bilinear weights, and bounds mask."""
+  h1, w1 = m1.shape[2], m1.shape[3]
+  ix = xp.arange(w1, dtype=val_dtype)[None, None, :]
+  iy = xp.arange(h1, dtype=val_dtype)[None, :, None]
+  qx = ix * ratio + off_x + m1[0] * inv_s2
+  qy = iy * ratio + off_y + m1[1] * inv_s2
+  in_b = (
+      xp.isfinite(qx)
+      & xp.isfinite(qy)
+      & (qx >= 0.0)
+      & (qx <= float(w2 - 1))
+      & (qy >= 0.0)
+      & (qy <= float(h2 - 1))
+  )
+  qx_c = xp.clip(xp.where(in_b, qx, 0.0), 0.0, float(w2 - 1))
+  qy_c = xp.clip(xp.where(in_b, qy, 0.0), 0.0, float(h2 - 1))
+  kx = xp.clip(xp.floor(qx_c).astype(idx_dtype), 0, w2 - 2)
+  ky = xp.clip(xp.floor(qy_c).astype(idx_dtype), 0, h2 - 2)
+  wx1 = qx_c - (kx.astype(val_dtype) if xp is jnp else kx)
+  wy1 = qy_c - (ky.astype(val_dtype) if xp is jnp else ky)
+  return ky, kx, 1.0 - wy1, wy1, 1.0 - wx1, wx1, in_b
+
+
+@jax.jit
+def _compose_maps_dense_jit(
+    m1: jax.Array,
+    m2: jax.Array,
+    ratio: float,
+    inv_s2: float,
+    off_x: float,
+    off_y: float,
+) -> jax.Array:
+  """JIT-compiled bilinear relative coordinate map composition."""
+  ky, kx, wy0, wy1, wx0, wx1, in_b = _compose_bilinear_coords(
+      jnp,
+      m1,
+      m2.shape[2],
+      m2.shape[3],
+      ratio,
+      inv_s2,
+      off_x,
+      off_y,
+      jnp.float32,
+      jnp.int32,
+  )
+
+  def _sample_z(m1_z, m2_z, ky_z, kx_z, wy0_z, wy1_z, wx0_z, wx1_z, in_b_z):
+    v00 = m2_z[:, ky_z, kx_z]
+    v01 = m2_z[:, ky_z, kx_z + 1]
+    v10 = m2_z[:, ky_z + 1, kx_z]
+    v11 = m2_z[:, ky_z + 1, kx_z + 1]
+    interp = wy0_z * (wx0_z * v00 + wx1_z * v01) + wy1_z * (
+        wx0_z * v10 + wx1_z * v11
+    )
+    return jnp.where(in_b_z[None, ...], m1_z + interp, jnp.nan)
+
+  return jax.vmap(
+      _sample_z, in_axes=(1, 1, 0, 0, 0, 0, 0, 0, 0), out_axes=1
+  )(m1, m2, ky, kx, wy0, wy1, wx0, wx1, in_b)
+
+
+def _compose_maps_bilinear(
+    map1: np.ndarray,
+    map2: np.ndarray,
+    ratio: float,
+    inv_s2: float,
+    off_x: float,
+    off_y: float,
+) -> np.ndarray:
+  """Evaluates regular-grid bilinear composition across all z slices."""
+  nz, h1, w1 = map1.shape[1], map1.shape[2], map1.shape[3]
+  m2 = map2[:, :nz, :, :]
+  if (
+      map1.dtype != np.float64
+      and map2.dtype != np.float64
+      and nz * h1 * w1 >= 16384
+  ):
+    out_dev = _compose_maps_dense_jit(
+        jnp.asarray(map1, dtype=jnp.float32),
+        jnp.asarray(m2, dtype=jnp.float32),
+        ratio,
+        inv_s2,
+        off_x,
+        off_y,
+    )
+    return np.array(out_dev, dtype=map1.dtype, copy=True)
+
+  m1_f = map1.astype(np.float64, copy=False)
+  m2_f = m2.astype(np.float64, copy=False)
+  h2, w2 = m2.shape[2], m2.shape[3]
+  ky, kx, wy0, wy1, wx0, wx1, in_b = _compose_bilinear_coords(
+      np,
+      m1_f,
+      h2,
+      w2,
+      ratio,
+      inv_s2,
+      off_x,
+      off_y,
+      np.float64,
+      np.intp,
+  )
+  base = (np.arange(nz, dtype=np.intp)[:, None, None] * h2 + ky) * w2 + kx
+  i00, i01, i10, i11 = base, base + 1, base + w2, base + (w2 + 1)
+  composed = np.empty_like(m1_f)
+  for ch in range(2):
+    flat = np.ascontiguousarray(m2_f[ch]).ravel()
+    interp = wy0 * (wx0 * flat[i00] + wx1 * flat[i01]) + wy1 * (
+        wx0 * flat[i10] + wx1 * flat[i11]
+    )
+    composed[ch] = np.where(in_b, m1_f[ch] + interp, np.nan)
+  return composed.astype(map1.dtype, copy=False)
+
+
 def compose_maps(
     map1: np.ndarray,
     box1: bounding_box.BoundingBox,
@@ -1139,141 +1229,79 @@ def compose_maps(
   Returns:
     coordinate map corresponding to map2(map1(x, y))
   """
-
   assert map1.shape[0] == 2
   assert map2.shape[0] == 2
   nz, h1, w1 = map1.shape[1], map1.shape[2], map1.shape[3]
   h2, w2 = map2.shape[2], map2.shape[3]
-  ret = np.full_like(map1, np.nan)
   if nz == 0 or h1 == 0 or w1 == 0:
+    return np.full_like(map1, np.nan)
+  assert map2.shape[1] >= nz
+  if h2 < 2 or w2 < 2:
+    return np.full_like(map1, np.nan)
+
+  ratio = float(stride1) / float(stride2)
+  inv_s2 = 1.0 / float(stride2)
+  off_x = (
+      float(box1.start[0]) * float(stride1)
+      - float(box2.start[0]) * float(stride2)
+  ) * inv_s2
+  off_y = (
+      float(box1.start[1]) * float(stride1)
+      - float(box2.start[1]) * float(stride2)
+  ) * inv_s2
+
+  ret = _compose_maps_bilinear(map1, map2, ratio, inv_s2, off_x, off_y)
+  dense_src_z = np.all(np.isfinite(map2[:, :nz, ...]), axis=(0, 2, 3))
+  if np.all(dense_src_z):
     return ret
 
-  assert map2.shape[1] >= nz
-  if h2 >= 2 and w2 >= 2:
-    dense_src_z = np.all(np.isfinite(map2[:, :nz, ...]), axis=(0, 2, 3))
-  else:
-    dense_src_z = np.zeros(nz, dtype=bool)
-
-  if np.any(dense_src_z):
-    dense_idx = np.flatnonzero(dense_src_z)
-    ratio = float(stride1) / float(stride2)
-    inv_s2 = 1.0 / float(stride2)
-    off_x = (
-        float(box1.start[0]) * float(stride1)
-        - float(box2.start[0]) * float(stride2)
-    ) * inv_s2
-    off_y = (
-        float(box1.start[1]) * float(stride1)
-        - float(box2.start[1]) * float(stride2)
-    ) * inv_s2
-
-    if (
-        map1.dtype != np.float64
-        and map2.dtype != np.float64
-        and dense_idx.size * h1 * w1 >= 16384
-    ):
-      out_dev = _compose_maps_dense_jit(
-          jnp.asarray(map1[:, dense_idx, :, :], dtype=jnp.float32),
-          jnp.asarray(map2[:, dense_idx, :, :], dtype=jnp.float32),
-          ratio,
-          inv_s2,
-          off_x,
-          off_y,
-      )
-      ret[:, dense_idx, :, :] = np.asarray(out_dev).astype(
-          ret.dtype, copy=False
-      )
-    else:
-      m1_sub = map1[:, dense_idx, :, :].astype(np.float64, copy=False)
-      m2_sub = map2[:, dense_idx, :, :].astype(np.float64, copy=False)
-      ix = np.arange(w1, dtype=np.float64)[np.newaxis, np.newaxis, :]
-      iy = np.arange(h1, dtype=np.float64)[np.newaxis, :, np.newaxis]
-      qx = ix * ratio + off_x + m1_sub[0] * inv_s2
-      qy = iy * ratio + off_y + m1_sub[1] * inv_s2
-      in_b = (
-          np.isfinite(qx)
-          & np.isfinite(qy)
-          & (qx >= 0.0)
-          & (qx <= w2 - 1)
-          & (qy >= 0.0)
-          & (qy <= h2 - 1)
-      )
-      qx_c = np.clip(np.where(in_b, qx, 0.0), 0.0, w2 - 1.0)
-      qy_c = np.clip(np.where(in_b, qy, 0.0), 0.0, h2 - 1.0)
-      kx = np.clip(np.floor(qx_c).astype(np.intp), 0, w2 - 2)
-      ky = np.clip(np.floor(qy_c).astype(np.intp), 0, h2 - 2)
-      wx1 = qx_c - kx
-      wx0 = 1.0 - wx1
-      wy1 = qy_c - ky
-      wy0 = 1.0 - wy1
-      zi = np.arange(dense_idx.size, dtype=np.intp)[:, np.newaxis, np.newaxis]
-      v00 = m2_sub[:, zi, ky, kx]
-      v01 = m2_sub[:, zi, ky, kx + 1]
-      v10 = m2_sub[:, zi, ky + 1, kx]
-      v11 = m2_sub[:, zi, ky + 1, kx + 1]
-      composed = m1_sub + (
-          wy0[np.newaxis, ...]
-          * (wx0[np.newaxis, ...] * v00 + wx1[np.newaxis, ...] * v01)
-          + wy1[np.newaxis, ...]
-          * (wx0[np.newaxis, ...] * v10 + wx1[np.newaxis, ...] * v11)
-      )
-      composed[:, ~in_b] = np.nan
-      ret[:, dense_idx, :, :] = composed.astype(ret.dtype, copy=False)
-
-    if np.all(dense_src_z):
-      return ret
-
-  sparse_idx = np.flatnonzero(~dense_src_z)
-  abs_map1 = to_absolute(
-      map1[:, sparse_idx, :, :].astype(np.float64, copy=False),
-      stride1,
-      box1,
-  )
-  abs_map2 = to_absolute(
-      map2[:, sparse_idx, :, :].astype(np.float64, copy=False),
-      stride2,
-      box2,
-  )
-
-  src_y, src_x = np.mgrid[
-      box2.start[1] : box2.end[1], box2.start[0] : box2.end[0]
-  ]
-  src_x = src_x.astype(np.float64) * stride2
-  src_y = src_y.astype(np.float64) * stride2
-
-  sparse_ret = np.full_like(abs_map1, np.nan)
-  for loc_z in range(sparse_idx.size):
-    valid = np.all(np.isfinite(abs_map1[:, loc_z, ...]), axis=0)
-    if not np.any(valid):
+  prev_boundary: np.ndarray | None = None
+  prev_tri: spatial.Delaunay | None = None
+  for z in np.flatnonzero(~dense_src_z):
+    ret_ok = np.all(np.isfinite(ret[:, z]), axis=0)
+    if np.all(ret_ok):
       continue
-
-    query_points = (
-        abs_map1[0, loc_z, ...][valid],
-        abs_map1[1, loc_z, ...][valid],
-    )
-
-    valid_src = np.all(np.isfinite(abs_map2[:, loc_z, ...]), axis=0)
+    ret[:, z, ~ret_ok] = np.nan
+    rem_cand = np.all(np.isfinite(map1[:, z]), axis=0) & ~ret_ok
+    rem_y, rem_x = np.nonzero(rem_cand)
+    if rem_y.size == 0:
+      continue
+    valid_src = np.all(np.isfinite(map2[:, z]), axis=0)
     if not np.any(valid_src):
       continue
 
-    src_points = src_x[valid_src], src_y[valid_src]
+    boundary_src = _boundary_valid_mask(valid_src)
+    by, bx = np.nonzero(boundary_src)
+    m1_rem = map1[:, z, rem_y, rem_x].astype(np.float64)
+    qx = rem_x.astype(np.float64) * ratio + off_x + m1_rem[0] * inv_s2
+    qy = rem_y.astype(np.float64) * ratio + off_y + m1_rem[1] * inv_s2
+    in_b = (
+        (qx >= float(bx.min()))
+        & (qx <= float(bx.max()))
+        & (qy >= float(by.min()))
+        & (qy <= float(by.max()))
+    )
+    if not np.any(in_b):
+      continue
+
     try:
-      u, v = _interpolate_points(
-          src_points,
-          query_points,
-          abs_map2[0, loc_z, ...][valid_src],
-          abs_map2[1, loc_z, ...][valid_src],
-      )
-      sparse_ret[0, loc_z, ...][valid] = u
-      sparse_ret[1, loc_z, ...][valid] = v
-    except spatial.qhull.QhullError:
+      if (
+          prev_boundary is None
+          or prev_tri is None
+          or not np.array_equal(boundary_src, prev_boundary)
+      ):
+        prev_tri = spatial.Delaunay(
+            np.ascontiguousarray(np.column_stack([bx, by]), dtype=np.double)
+        )
+        prev_boundary = boundary_src
+      vals = map2[:, z, by, bx].astype(np.float64, copy=False).T
+      ip = interpolate.LinearNDInterpolator(prev_tri, vals, fill_value=np.nan)
+      ret[:, z, rem_y[in_b], rem_x[in_b]] = (
+          m1_rem[:, in_b] + ip(qx[in_b], qy[in_b]).T
+      ).astype(ret.dtype, copy=False)
+    except spatial.QhullError:
       pass
 
-  ret[:, sparse_idx, :, :] = to_relative(
-      sparse_ret,
-      stride1,
-      box1,
-  ).astype(ret.dtype, copy=False)
   return ret
 
 

@@ -1024,6 +1024,228 @@ class MapUtilsTest(absltest.TestCase):
     )
     np.testing.assert_allclose(filled_3d, 3.5)
 
+  def test_compose_maps_partial_nan_border_holes_and_cache(self):
+    rng = np.random.default_rng(77)
+    # Large float32 batch (>= 16384 nodes) with curved outer NaN border,
+    # interior holes, concave notch, and both shared and distinct masks across z
+    # to exercise JIT bilinear, boundary Delaunay, and cache reuse/invalidation.
+    nz, h, w = 4, 80, 96
+    box = bounding_box.BoundingBox(start=(1000, 2000, 0), size=(w, h, nz))
+    gy, gx = np.mgrid[:h, :w]
+    m1 = np.zeros((2, nz, h, w), dtype=np.float32)
+    m2 = np.zeros((2, nz, h, w), dtype=np.float32)
+    for z in range(nz):
+      m1[0, z] = (
+          rng.uniform(-25.0, 25.0, size=(h, w)) + 0.1 * gx
+      ).astype(np.float32)
+      m1[1, z] = (
+          rng.uniform(-25.0, 25.0, size=(h, w)) - 0.1 * gy
+      ).astype(np.float32)
+      m2[0, z] = (0.3 * gx - 0.2 * gy + 2.0 * z).astype(np.float32)
+      m2[1, z] = (-0.15 * gx + 0.25 * gy - 1.5 * z).astype(np.float32)
+
+    # Slices 0 and 1 share an identical curved border + concave notch + holes.
+    border_invalid = (
+        (gx < (3 + 2 * np.sin(gy / 10.0)))
+        | (gx > (w - 4 - 2 * np.cos(gy / 12.0)))
+        | (gy < 3)
+        | (gy > h - 4)
+    )
+    notch = (gy < 12) & (gx >= 35) & (gx < 45)
+    hole1 = (gy >= 30) & (gy < 34) & (gx >= 40) & (gx < 46)
+    slit = (gy == 55) & (gx >= 20) & (gx < 35)
+    mask01 = border_invalid | notch | hole1 | slit
+    m2[:, 0, mask01] = np.nan
+    m2[:, 1, mask01] = np.nan
+    # Slice 2 has a different hole pattern (cache miss).
+    mask2 = border_invalid | ((gy >= 40) & (gy < 45) & (gx >= 60) & (gx < 65))
+    m2[:, 2, mask2] = np.nan
+    # Slice 3 is all NaN.
+    m2[:, 3, :, :] = np.nan
+
+    orig_delaunay = spatial.Delaunay
+    delaunay_point_counts: list[int] = []
+
+    def _counting_delaunay(pts, *args, **kwargs):
+      delaunay_point_counts.append(len(pts))
+      return orig_delaunay(pts, *args, **kwargs)
+
+    with mock.patch.object(
+        spatial, 'Delaunay', side_effect=_counting_delaunay
+    ):
+      got = map_utils.compose_maps(m1, box, 40.0, m2, box, 40.0)
+
+    # Only 2 triangulations built (shared mask for z=0,1 + distinct mask z=2),
+    # each using only boundary points (<< total valid points).
+    self.assertLen(delaunay_point_counts, 2)
+    self.assertLess(max(delaunay_point_counts), 800)
+    self.assertTrue(np.all(np.isnan(got[:, 3])))
+
+    for z in range(3):
+      qx = gx + m1[0, z].astype(np.float64) / 40.0
+      qy = gy + m1[1, z].astype(np.float64) / 40.0
+      valid_s = np.all(np.isfinite(m2[:, z]), axis=0)
+      pts_s = np.column_stack([gx[valid_s], gy[valid_s]])
+      for ch in range(2):
+        with self.subTest(z=z, ch=ch):
+          lin_nd = interpolate.LinearNDInterpolator(
+              pts_s, m2[ch, z][valid_s].astype(np.float64), fill_value=np.nan
+          )
+          expected = m1[ch, z].astype(np.float64) + lin_nd(qx, qy)
+          np.testing.assert_allclose(
+              got[ch, z], expected, rtol=1e-4, atol=1e-3, equal_nan=True
+          )
+
+    # Solid inner-box valid region (outer NaN border only) skips Qhull entirely
+    # when residual queries stay outside the valid box, and 1-pixel-thin map2
+    # returns all-NaN cleanly.
+    m2_box_nan = np.ones((2, 1, 20, 24), dtype=np.float32) * 4.0
+    m2_box_nan[:, :, :2, :] = np.nan
+    m2_box_nan[:, :, -2:, :] = np.nan
+    m2_box_nan[:, :, :, :2] = np.nan
+    m2_box_nan[:, :, :, -2:] = np.nan
+    m1_shift = np.full((2, 1, 20, 24), -10.0, dtype=np.float32)
+    b_small = bounding_box.BoundingBox(start=(0, 0, 0), size=(24, 20, 1))
+    delaunay_point_counts.clear()
+    with mock.patch.object(
+        spatial, 'Delaunay', side_effect=_counting_delaunay
+    ):
+      got_box = map_utils.compose_maps(
+          m1_shift, b_small, 40.0, m2_box_nan, b_small, 40.0
+      )
+    self.assertEmpty(delaunay_point_counts)
+    np.testing.assert_allclose(got_box[:, 0, 3:-2, 3:-2], -6.0)
+    self.assertTrue(np.all(np.isnan(got_box[:, 0, :2, :])))
+
+    b_thin = bounding_box.BoundingBox(start=(0, 0, 0), size=(1, 20, 1))
+    m2_thin = np.zeros((2, 1, 20, 1), dtype=np.float32)
+    got_thin = map_utils.compose_maps(
+        m1_shift, b_small, 40.0, m2_thin, b_thin, 40.0
+    )
+    self.assertTrue(np.all(np.isnan(got_thin)))
+
+  def test_invert_map_partial_nan_curved_border_and_hole(self):
+    h, w = 64, 72
+    box = bounding_box.BoundingBox(start=(10, 20, 0), size=(w, h, 1))
+    gy, gx = np.mgrid[:h, :w]
+    cmap = np.zeros((2, 1, h, w), dtype=np.float64)
+    cmap[0, 0] = 25.0 + 6.0 * np.sin(gx / 18.0) + 0.08 * gy
+    cmap[1, 0] = -15.0 + 5.0 * np.cos(gy / 16.0) - 0.06 * gx
+    # Curved outer border NaN strip + interior 3x3 hole.
+    invalid = (
+        (gx < (3 + 1.5 * np.sin(gy / 9.0)))
+        | (gx > (w - 4))
+        | (gy < 2)
+        | (gy > h - 3)
+        | ((gy >= 28) & (gy < 31) & (gx >= 32) & (gx < 35))
+    )
+    cmap[:, 0, invalid] = np.nan
+
+    inv = map_utils.invert_map(cmap, box, box, 40.0)
+    # Compare against full Delaunay reference on finite entries and hull mask.
+    valid_s = np.all(np.isfinite(cmap[:, 0]), axis=0)
+    bu = gx[valid_s] + cmap[0, 0, valid_s] / 40.0
+    bv = gy[valid_s] + cmap[1, 0, valid_s] / 40.0
+    ref_u = interpolate.LinearNDInterpolator(
+        np.column_stack([bu, bv]), -cmap[0, 0, valid_s], fill_value=np.nan
+    )(gx.astype(np.float64), gy.astype(np.float64))
+    ref_v = interpolate.LinearNDInterpolator(
+        np.column_stack([bu, bv]), -cmap[1, 0, valid_s], fill_value=np.nan
+    )(gx.astype(np.float64), gy.astype(np.float64))
+
+    both_finite = np.isfinite(inv[0, 0]) & np.isfinite(ref_u)
+    self.assertGreater(int(np.count_nonzero(both_finite)), 3000)
+    np.testing.assert_allclose(
+        inv[0, 0, both_finite], ref_u[both_finite], atol=2e-2
+    )
+    np.testing.assert_allclose(
+        inv[1, 0, both_finite], ref_v[both_finite], atol=2e-2
+    )
+
+    # Exact forward-inverse composition check on interior valid region.
+    comp = map_utils.compose_maps(inv, box, 40.0, cmap, box, 40.0)
+    valid_c = np.all(np.isfinite(comp[:, 0]), axis=0)
+    self.assertGreater(int(np.count_nonzero(valid_c)), 3000)
+    np.testing.assert_allclose(comp[:, 0, valid_c], 0.0, atol=2e-2)
+
+  def test_invert_map_3d_partial_nan_jit_and_fold_fallback(self):
+    # 3D >= 65536 dst nodes (18x60x62 = 66,960) with anisotropic stride, shifted
+    # dst_box, outer NaN border, and interior NaN hole to exercise 3D JIT +
+    # _invert_partial_newton.
+    src_box = bounding_box.BoundingBox(start=(4, 8, 2), size=(60, 58, 18))
+    dst_box = src_box.adjusted_by(start=(-1, -1, 0), end=(1, 1, 0))
+    gz, gy, gx = np.mgrid[:18, :58, :60]
+    stride = (10.0, 15.0, 20.0)
+    cmap = np.zeros((3, 18, 58, 60), dtype=np.float64)
+    cmap[0] = 12.0 + 2.5 * np.sin(gx / 9.0) * np.cos(gy / 10.0)
+    cmap[1] = -9.0 + 2.0 * np.cos(gy / 8.0) * np.sin(gz / 5.0)
+    cmap[2] = 4.0 + 1.5 * np.sin(gz / 5.0) * np.cos(gx / 11.0)
+    cmap[:, 0, :, :] = np.nan
+    cmap[:, :, :2, :] = np.nan
+    cmap[:, 6:9, 24:27, 25:28] = np.nan
+
+    inv = map_utils.invert_map(cmap, src_box, dst_box, stride)
+    self.assertEqual(inv.shape, (3, 18, 60, 62))
+    comp_rev = np.asarray(
+        map_utils.compose_maps_fast(
+            inv,
+            dst_box.start[::-1],
+            stride,
+            cmap,
+            src_box.start[::-1],
+            stride,
+            mode='constant',
+        )
+    )
+    # Interior valid cells should invert to exact trilinear precision, while
+    # hole cells smoothly interpolate via 3D boundary Delaunay.
+    interior_ok = np.all(np.isfinite(comp_rev), axis=0)
+    self.assertGreater(int(np.count_nonzero(interior_ok)), 10000)
+    np.testing.assert_allclose(comp_rev[:, interior_ok], 0.0, atol=2e-2)
+
+    # Non-injective folds in both 2D and 3D fall back to full Delaunay.
+    fold_2d = np.zeros((2, 2, 10, 12), dtype=np.float64)
+    fold_2d[0, 0] = 4.0
+    fold_2d[0, 1] = 4.0
+    fold_2d[0, 1, 5, 5] = 80.0
+    box_2d = bounding_box.BoundingBox(start=(0, 0, 0), size=(12, 10, 2))
+    inv_fold_2d = map_utils.invert_map(fold_2d, box_2d, box_2d, 20.0)
+    np.testing.assert_allclose(inv_fold_2d[0, 0, :, 1:], -4.0, atol=1e-6)
+    self.assertTrue(np.isfinite(inv_fold_2d[0, 1, 1, 2]))
+
+    fold_3d = np.zeros((3, 6, 8, 9), dtype=np.float64)
+    fold_3d[0] = 4.0
+    fold_3d[0, 3, 4, 4] = 80.0
+    box_3d = bounding_box.BoundingBox(start=(0, 0, 0), size=(9, 8, 6))
+    inv_fold_3d = map_utils.invert_map(fold_3d, box_3d, box_3d, 20.0)
+    self.assertEqual(inv_fold_3d.shape, (3, 6, 8, 9))
+    self.assertTrue(np.isfinite(inv_fold_3d[0, 1, 1, 2]))
+
+  def test_fill_missing_2d_boundary_matches_full_delaunay(self):
+    h, w = 48, 56
+    gy, gx = np.mgrid[:h, :w]
+    cmap = np.zeros((2, 1, h, w), dtype=np.float64)
+    cmap[0, 0] = 0.4 * gx - 0.2 * gy + 3.0
+    cmap[1, 0] = -0.3 * gx + 0.5 * gy - 2.0
+    missing = (
+        (gx < (4 + 2 * np.sin(gy / 8.0)))
+        | (gy >= 20) & (gy < 24) & (gx >= 24) & (gx < 28)
+    )
+    cmap[:, 0, missing] = np.nan
+
+    filled = map_utils.fill_missing(cmap, extrapolate=False)
+    valid = ~missing
+    pts = np.column_stack([gx[valid], gy[valid]])
+    for ch in range(2):
+      with self.subTest(ch=ch):
+        expected = cmap[ch, 0].copy()
+        expected[missing] = interpolate.LinearNDInterpolator(
+            pts, cmap[ch, 0, valid], fill_value=np.nan
+        )(gx[missing], gy[missing])
+        np.testing.assert_allclose(
+            filled[ch, 0], expected, rtol=1e-6, atol=1e-6, equal_nan=True
+        )
+
 
 if __name__ == '__main__':
   absltest.main()
